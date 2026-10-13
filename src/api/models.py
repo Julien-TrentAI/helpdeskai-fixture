@@ -5,12 +5,21 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ChatRequest(BaseModel):
-    message: str
-    thread_id: Optional[str] = None
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, max_length=4000)
+    thread_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
+
+    @field_validator("message")
+    @classmethod
+    def _message_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("message must not be blank")
+        return v
 
 
 class ChatResponse(BaseModel):
@@ -20,8 +29,18 @@ class ChatResponse(BaseModel):
 
 
 class KBUploadRequest(BaseModel):
-    document_key: str
-    content_base64: str
+    model_config = ConfigDict(extra="forbid")
+
+    document_key: str = Field(min_length=1, max_length=512)
+    # ~10 MB decoded limit is enforced in the route; cap the encoded size here.
+    content_base64: str = Field(min_length=1, max_length=14 * 1024 * 1024)
+
+    @field_validator("document_key")
+    @classmethod
+    def _safe_key(cls, v: str) -> str:
+        if v.startswith("/") or "\\" in v or ".." in v.split("/") or "\x00" in v:
+            raise ValueError("document_key must be a relative path without '..' segments")
+        return v
 
 
 class KBUploadResponse(BaseModel):
