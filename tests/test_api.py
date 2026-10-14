@@ -74,3 +74,14 @@ def test_get_kb_document_rejects_traversal_key():
     for key in ("../x", "/abs", "a//b", "a\\b", "x" * 513):
         with pytest.raises(ValueError):
             validate_document_key(key)
+
+
+def test_chat_rejects_malformed_tenant_header():
+    from src.api.app import create_app
+
+    client = TestClient(create_app())
+    for bad in ["a b", "t1'; DROP TABLE x;--", "x" * 65]:
+        resp = client.post(
+            "/v1/chat", json={"message": "hi"}, headers={"X-Tenant-Id": bad}
+        )
+        assert resp.status_code == 400

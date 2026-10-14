@@ -7,6 +7,7 @@ an insecure path (raw X-Tenant-Id header) to contrast correct vs vulnerable patt
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 import jwt
@@ -14,6 +15,8 @@ from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v1/auth/token")
+
+_TENANT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "changeme-replace-in-production")
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
@@ -115,5 +118,10 @@ async def get_tenant_from_header(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="X-Tenant-Id header is required.",
         )
-    # No verification: the caller controls this value entirely.
+    if not _TENANT_ID_RE.fullmatch(x_tenant_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Tenant-Id header has an invalid format.",
+        )
+    # Format-checked only: the caller still controls this value (VULN-MT-002).
     return x_tenant_id
