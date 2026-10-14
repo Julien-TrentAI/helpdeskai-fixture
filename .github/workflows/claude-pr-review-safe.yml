@@ -45,9 +45,12 @@ jobs:
         # CTRL-CI-002: Action pinned to a full commit SHA, not a floating tag.
         # The comment documents the version for human readers while the SHA
         # prevents silent tag replacement.
-        uses: anthropics/claude-code-action@ad3c35f9e03e073624b484e68eb8ba9183cef1b8  # v1.0.2
+        uses: anthropics/claude-code-action@34968b5981d5d170904281aa3df6f3c0d4a28855  # v1.0.249
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Use the job's scoped GITHUB_TOKEN rather than the OIDC app-token
+          # exchange, so the job doesn't need id-token: write.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           trigger_phrase: "@claude"
           # Restrict Claude Code to read-only tools — it cannot write files or
           # execute shell commands. This limits blast radius if the agent is

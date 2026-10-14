@@ -45,6 +45,9 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Use the job's GITHUB_TOKEN rather than the OIDC app-token exchange,
+          # which fails without id-token: write.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           # The @claude trigger phrase means any PR commenter can invoke the agent.
           trigger_phrase: "@claude"
           # Claude Code will read .claude/skills/ from the checked-out head — which
