@@ -15,6 +15,8 @@ what makes the agent able to reach tenant data, and what makes CHAIN-1 (chat
 prompt-injection -> un-tenant-scoped lookup -> cross-tenant PII) concrete.
 """
 
+import math
+import re
 import subprocess
 import urllib.request
 from langchain_core.tools import tool
@@ -22,6 +24,49 @@ from langchain_core.tools import tool
 from src.data.rds_client import RDSClient
 from src.data.s3_client import S3Client
 from src.data.dynamodb_client import DynamoDBClient
+
+
+# ── Input validation for HelpDeskAI domain tools ─────────────────────────────
+
+_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MAX_REFUND_AMOUNT = 10_000.0
+MAX_SUBJECT_LENGTH = 200
+MAX_TICKET_BODY_LENGTH = 10_000
+MAX_QUERY_PREFIX_LENGTH = 256
+
+
+def _validate_id(value: str, name: str) -> str:
+    if not isinstance(value, str) or not _ID_RE.fullmatch(value):
+        raise ValueError(f"{name} must be 1-64 characters of letters, digits, '_' or '-'")
+    return value
+
+
+def _validate_refund_amount(amount: float) -> float:
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        raise ValueError("amount must be a number")
+    if not math.isfinite(amount) or amount <= 0 or amount > MAX_REFUND_AMOUNT:
+        raise ValueError(f"amount must be greater than 0 and at most {MAX_REFUND_AMOUNT}")
+    return float(amount)
+
+
+def _validate_query_prefix(prefix: str) -> str:
+    if (
+        not isinstance(prefix, str)
+        or len(prefix) > MAX_QUERY_PREFIX_LENGTH
+        or prefix.startswith("/")
+        or "\\" in prefix
+        or "\x00" in prefix
+        or ".." in prefix.split("/")
+    ):
+        raise ValueError("query_prefix must be a relative path prefix without '..' segments")
+    return prefix
+
+
+def _validate_text(value: str, name: str, max_length: int) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > max_length:
+        raise ValueError(f"{name} must be non-blank and at most {max_length} characters")
+    return value
 
 
 @tool
@@ -88,6 +133,8 @@ def lookup_order(order_id: str, tenant_id: str) -> dict:
     # RDSClient.lookup_order, which builds raw f-string SQL with no tenant scoping.
     # A prompt-injected agent can read ANY tenant's order (CHAIN-1). tenant_id is
     # accepted but ignored by the underlying query.
+    _validate_id(order_id, "order_id")
+    _validate_id(tenant_id, "tenant_id")
     return RDSClient().lookup_order(order_id)
 
 
@@ -102,6 +149,9 @@ def issue_refund(order_id: str, amount: float, tenant_id: str) -> bool:
     """
     # SECURITY FIXTURE: VULN-MT-001 + VULN-DATA-001 (transitive) — cross-tenant
     # write IDOR + SQLi reachable from the agent.
+    _validate_id(order_id, "order_id")
+    _validate_id(tenant_id, "tenant_id")
+    amount = _validate_refund_amount(amount)
     return RDSClient().issue_refund(order_id, amount)
 
 
@@ -116,6 +166,8 @@ def search_kb(query_prefix: str, tenant_id: str) -> list:
     # SECURITY FIXTURE: VULN-MT-003 (transitive) — query_prefix flows into
     # S3Client.search_kb, which does not enforce a per-tenant prefix; "../other/"
     # reaches another tenant's KB.
+    _validate_id(tenant_id, "tenant_id")
+    _validate_query_prefix(query_prefix)
     return S3Client().search_kb(tenant_id, query_prefix)
 
 
@@ -130,6 +182,11 @@ def create_ticket(subject: str, body: str, customer_email: str, tenant_id: str) 
         tenant_id: The current tenant context.
     """
     # Correctly tenant-scoped write (CTRL-DATA-001 lives in DynamoDBClient.create_ticket).
+    _validate_id(tenant_id, "tenant_id")
+    _validate_text(subject, "subject", MAX_SUBJECT_LENGTH)
+    _validate_text(body, "body", MAX_TICKET_BODY_LENGTH)
+    if not isinstance(customer_email, str) or len(customer_email) > 254 or not _EMAIL_RE.fullmatch(customer_email):
+        raise ValueError("customer_email must be a valid email address")
     return DynamoDBClient().create_ticket(tenant_id, subject, body, customer_email)
 
 
