@@ -7,6 +7,7 @@ an insecure path (raw X-Tenant-Id header) to contrast correct vs vulnerable patt
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 import jwt
@@ -100,6 +101,9 @@ async def get_current_tenant(token: str = Depends(oauth2_scheme)) -> TokenPayloa
     return _validator.validate(token)
 
 
+_TENANT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
 async def get_tenant_from_header(
     x_tenant_id: str | None = Header(default=None),
 ) -> str:
@@ -115,5 +119,10 @@ async def get_tenant_from_header(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="X-Tenant-Id header is required.",
         )
-    # No verification: the caller controls this value entirely.
+    # Format validation only (not authentication): the caller still controls this value.
+    if not _TENANT_ID_RE.fullmatch(x_tenant_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Tenant-Id header is malformed.",
+        )
     return x_tenant_id

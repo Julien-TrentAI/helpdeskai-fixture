@@ -28,3 +28,23 @@ def test_query_prefix_rejected(p):
 def test_text_blank_rejected():
     with pytest.raises(ValueError):
         tools._validate_text("   ", "subject", 10)
+
+
+@pytest.mark.parametrize("v", ["a b", "t1'; DROP", "x" * 65, "../t"])
+def test_tenant_header_rejected(v):
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from src.auth.jwt_validator import get_tenant_from_header
+
+    with pytest.raises(HTTPException):
+        asyncio.run(get_tenant_from_header(v))
+
+
+def test_tenant_header_ok():
+    import asyncio
+
+    from src.auth.jwt_validator import get_tenant_from_header
+
+    assert asyncio.run(get_tenant_from_header("tenant_1-A")) == "tenant_1-A"
