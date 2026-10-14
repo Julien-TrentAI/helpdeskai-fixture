@@ -41,3 +41,28 @@ def test_orchestrator_factory_returns_invokable():
     orch = create_orchestrator()
     assert isinstance(orch, Orchestrator)
     assert hasattr(orch, "invoke")
+
+
+def test_chat_request_validation():
+    import pytest
+    from pydantic import ValidationError
+    from src.api.models import ChatRequest
+
+    assert ChatRequest(message="hi", thread_id="abc-123").message == "hi"
+    for bad in ({"message": ""}, {"message": "   "}, {"message": "x" * 4001},
+                {"message": "hi", "thread_id": "bad id!"}, {"message": "hi", "thread_id": "a" * 129}):
+        with pytest.raises(ValidationError):
+            ChatRequest(**bad)
+
+
+def test_kb_upload_request_validation():
+    import pytest
+    from pydantic import ValidationError
+    from src.api.models import KBUploadRequest
+
+    assert KBUploadRequest(document_key="faq/a.md", content_base64="aGk=").document_key == "faq/a.md"
+    for key in ("", "/abs", "../x", "a/../b", "a//b", "a\\b", "a\x00b"):
+        with pytest.raises(ValidationError):
+            KBUploadRequest(document_key=key, content_base64="aGk=")
+    with pytest.raises(ValidationError):
+        KBUploadRequest(document_key="a", content_base64="")
