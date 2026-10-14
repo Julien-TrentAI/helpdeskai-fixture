@@ -13,6 +13,17 @@ MAX_DOCUMENT_KEY_LENGTH = 512
 MAX_CONTENT_BASE64_LENGTH = 14 * 1024 * 1024
 
 
+def validate_document_key(v: str) -> str:
+    """Reject absolute paths, backslashes, NULs and empty/'.'/'..' path segments."""
+    if len(v) > MAX_DOCUMENT_KEY_LENGTH:
+        raise ValueError("document_key is too long")
+    if v.startswith("/") or "\\" in v or "\x00" in v:
+        raise ValueError("document_key must be a relative path without backslashes")
+    if any(part in ("", ".", "..") for part in v.split("/")):
+        raise ValueError("document_key must not contain empty, '.' or '..' segments")
+    return v
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=MAX_MESSAGE_LENGTH)
     thread_id: Optional[str] = Field(
@@ -40,11 +51,7 @@ class KBUploadRequest(BaseModel):
     @field_validator("document_key")
     @classmethod
     def _safe_document_key(cls, v: str) -> str:
-        if v.startswith("/") or "\\" in v or "\x00" in v:
-            raise ValueError("document_key must be a relative path without backslashes")
-        if any(part in ("", ".", "..") for part in v.split("/")):
-            raise ValueError("document_key must not contain empty, '.' or '..' segments")
-        return v
+        return validate_document_key(v)
 
 
 class KBUploadResponse(BaseModel):

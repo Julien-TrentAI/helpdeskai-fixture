@@ -64,3 +64,13 @@ def test_kb_upload_request_validation():
     for key in ("../etc/passwd", "/abs", "a//b", "a\\b", "", "a/./b"):
         with pytest.raises(ValidationError):
             KBUploadRequest(document_key=key, content_base64="aGk=")
+
+
+def test_get_kb_document_rejects_traversal_key():
+    from src.api.models import validate_document_key
+    import pytest
+
+    assert validate_document_key("faq/a.md") == "faq/a.md"
+    for key in ("../x", "/abs", "a//b", "a\\b", "x" * 513):
+        with pytest.raises(ValueError):
+            validate_document_key(key)

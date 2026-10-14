@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from src.auth.jwt_validator import TokenPayload, get_current_tenant
 from src.data.s3_client import S3Client
 
-from ..models import KBUploadRequest, KBUploadResponse
+from ..models import KBUploadRequest, KBUploadResponse, validate_document_key
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,13 @@ async def get_kb_document_url(
     does not enforce per-tenant key scoping (VULN-DATA-004). That vulnerability
     is in the data layer, not here — this route at least verifies the JWT.
     """
+    try:
+        validate_document_key(document_key)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
     client = S3Client()
     url = client.get_document_url(document_key=document_key)
     return {"url": url, "document_key": document_key}
