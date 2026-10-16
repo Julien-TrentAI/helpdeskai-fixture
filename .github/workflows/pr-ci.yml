@@ -1,7 +1,9 @@
 name: PR CI
 
+# pull_request, not pull_request_target: a fork PR then runs with a read-only
+# token and no secrets, so its code cannot use this workflow's permissions.
 on:
-  pull_request_target:
+  pull_request:
     branches: [main]
     types: [opened, reopened, synchronize, ready_for_review]
 
@@ -13,10 +15,9 @@ jobs:
     name: integration-tests
     runs-on: ubuntu-latest
     steps:
-      - name: Check out the PR commit
+      - name: Check out the PR merge commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Set up Python
@@ -40,7 +41,14 @@ jobs:
   enable-auto-merge:
     name: enable-auto-merge
     needs: integration-tests
-    if: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.draft == false }}
+    # Auto-merge only a Trent remediation loop's own pull request: same
+    # repository (never a fork), the loop branch, the routine's machine user.
+    if: >-
+      ${{ github.event_name == 'pull_request'
+          && github.event.pull_request.draft == false
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && startsWith(github.event.pull_request.head.ref, 'trent/loop-')
+          && github.event.pull_request.user.login == 'Julien-TrentAI' }}
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
