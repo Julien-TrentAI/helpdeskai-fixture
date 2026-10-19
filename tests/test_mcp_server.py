@@ -26,18 +26,21 @@ def test_execute_code_error_returns_message():
     assert "test error" in output
 
 
-def test_execute_code_no_sandbox():
-    """
-    Fixture verification: execute_code does NOT sandbox the provided code.
-    This test documents VULN-APP-004 by demonstrating that os.environ is
-    accessible from within execute_code — i.e., there is no restricted globals.
-    """
+def test_execute_code_sandboxed():
+    """execute_code must not expose the server environment or blocked modules."""
     from src.mcp_server.server import execute_code
-    # Set a dummy env var and verify execute_code can read it.
     os.environ["FIXTURE_TEST_SECRET"] = "plaintext-value"
-    output = execute_code(code="import os; result = os.environ.get('FIXTURE_TEST_SECRET')")
-    assert output == "plaintext-value"
-    del os.environ["FIXTURE_TEST_SECRET"]
+    try:
+        output = execute_code(code="import os; result = os.environ.get('FIXTURE_TEST_SECRET')")
+    finally:
+        del os.environ["FIXTURE_TEST_SECRET"]
+    assert output.startswith("Error")
+    assert "plaintext-value" not in output
+
+
+def test_execute_code_timeout_returns_error():
+    from src.mcp_server.server import execute_code
+    assert execute_code(code="while True: pass").startswith("Error")
 
 
 def test_query_database_basic():
