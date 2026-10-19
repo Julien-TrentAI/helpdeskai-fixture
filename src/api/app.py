@@ -14,6 +14,7 @@ from typing import AsyncGenerator
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from ..logging_config import install_pii_redaction
 from .routers import admin, chat, kb
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ def create_app() -> FastAPI:
 
     Returns a fully wired FastAPI instance ready to be served by uvicorn.
     """
+    install_pii_redaction()
     app = FastAPI(
         title="HelpDeskAI API",
         version="0.3.1",
