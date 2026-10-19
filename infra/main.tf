@@ -146,6 +146,41 @@ resource "aws_secretsmanager_secret_version" "rds_credentials" {
   })
 }
 
+variable "private_subnet_ids" {
+  description = "Private subnet IDs (no route to an internet gateway) for the RDS subnet group"
+  type        = list(string)
+}
+
+variable "vpc_id" {
+  description = "VPC that hosts the RDS instance"
+  type        = string
+}
+
+variable "app_security_group_id" {
+  description = "Security group of the application tasks allowed to reach the database"
+  type        = string
+}
+
+resource "aws_db_subnet_group" "orders" {
+  name       = "helpdeskai-orders-private"
+  subnet_ids = var.private_subnet_ids
+}
+
+# No internet-facing rules: Postgres is reachable only from the application security group.
+resource "aws_security_group" "rds_orders" {
+  name        = "helpdeskai-orders-rds"
+  description = "RDS orders database - private access from the app only"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description     = "Postgres from the application"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [var.app_security_group_id]
+  }
+}
+
 resource "aws_db_instance" "orders" {
   identifier          = "helpdeskai-orders"
   engine              = "postgres"
@@ -156,6 +191,8 @@ resource "aws_db_instance" "orders" {
   storage_encrypted   = true
   kms_key_id          = aws_kms_key.rds.arn
   publicly_accessible = false
+  db_subnet_group_name   = aws_db_subnet_group.orders.name
+  vpc_security_group_ids = [aws_security_group.rds_orders.id]
   skip_final_snapshot = true
 }
 
