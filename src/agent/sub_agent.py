@@ -16,8 +16,8 @@ from langchain_core.messages import AnyMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode
 
+from src.agent.tool_validation import create_validated_tool_node
 from src.agent.tools import _validate_task_no_injection
 
 
@@ -60,7 +60,7 @@ def create_sub_agent_node(tools: list[BaseTool]):
         # Capture the final response as the result.
         return END
 
-    tool_node = ToolNode(tools)
+    tool_node = create_validated_tool_node(tools)
 
     graph = StateGraph(SubAgentState)
     graph.add_node("agent", call_model)

