@@ -111,3 +111,21 @@ def test_all_routes_except_healthz_require_jwt():
         for method in route.methods - {"HEAD", "OPTIONS"}:
             resp = client.request(method, path.replace("{document_key:path}", "x"))
             assert resp.status_code == 401, (method, path)
+
+
+def test_admin_tenants_requires_admin_role():
+    import jwt
+
+    from src.api.app import create_app
+    from src.auth.jwt_validator import JWT_ALGORITHM, JWT_SECRET
+
+    client = TestClient(create_app())
+
+    def token(role):
+        claims = {"tenant_id": "t1", "sub": "u1", "exp": 4102444800, "role": role}
+        return jwt.encode(claims, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+    resp = client.get(
+        "/v1/admin/tenants", headers={"Authorization": f"Bearer {token('user')}"}
+    )
+    assert resp.status_code == 403
