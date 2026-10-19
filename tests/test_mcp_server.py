@@ -9,6 +9,45 @@ import pytest
 import sqlite3
 import os
 import tempfile
+import hashlib
+import json
+
+import pytest
+
+_TOKEN = "test-token"
+
+
+@pytest.fixture(autouse=True)
+def _mcp_caller(monkeypatch):
+    callers = {hashlib.sha256(_TOKEN.encode()).hexdigest():
+               {"caller": "tests", "tools": ["execute_code", "query_database"]}}
+    monkeypatch.setenv("MCP_CALLERS", json.dumps(callers))
+    monkeypatch.setenv("MCP_AUTH_TOKEN", _TOKEN)
+
+
+def test_tools_reject_missing_or_unknown_token(monkeypatch):
+    from src.mcp_server.server import execute_code
+    monkeypatch.delenv("MCP_AUTH_TOKEN")
+    with pytest.raises(PermissionError):
+        execute_code(code="result = 1")
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "wrong")
+    with pytest.raises(PermissionError):
+        execute_code(code="result = 1")
+
+
+def test_tools_reject_unauthorized_tool(monkeypatch):
+    from src.mcp_server.server import execute_code
+    callers = {hashlib.sha256(_TOKEN.encode()).hexdigest(): {"caller": "x", "tools": ["query_database"]}}
+    monkeypatch.setenv("MCP_CALLERS", json.dumps(callers))
+    with pytest.raises(PermissionError):
+        execute_code(code="result = 1")
+
+
+def test_tools_fail_closed_without_config(monkeypatch):
+    from src.mcp_server.server import execute_code
+    monkeypatch.delenv("MCP_CALLERS")
+    with pytest.raises(PermissionError):
+        execute_code(code="result = 1")
 
 
 def test_execute_code_basic():

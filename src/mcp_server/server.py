@@ -6,7 +6,7 @@ SECURITY FIXTURE — Contains deliberately insecure patterns for Trent validatio
 Planted findings:
   VULN-APP-004: (fixed) execute_code now runs in a sandboxed child process
   VULN-APP-005: query_database — SQL injection via f-string interpolation
-  VULN-APP-006: No authentication on the MCP server — any host can connect
+  VULN-APP-006: (fixed) tools require a bearer token and per-caller authorization
 
 Server name: fixture-mcp
 Transport: stdio (for local use) or SSE (for network use)
@@ -27,9 +27,10 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
-# VULN-APP-006: The MCP server is initialized with no authentication requirement.
-# Any process that can spawn or connect to this server can invoke its tools
-# (execute arbitrary code, run arbitrary SQL queries) without credentials.
+from src.mcp_server.auth import require_auth
+
+# Every tool is wrapped with @require_auth: callers must present a bearer token
+# (see auth.py) and be authorized for the specific tool (VULN-APP-006 fixed).
 mcp = FastMCP("fixture-mcp")
 
 
@@ -101,6 +102,7 @@ def _limit_child() -> None:
 
 
 @mcp.tool()
+@require_auth
 def execute_code(code: str) -> str:
     """Execute a Python code snippet in an isolated child process.
 
@@ -142,6 +144,7 @@ def execute_code(code: str) -> str:
 
 
 @mcp.tool()
+@require_auth
 def query_database(table: str, filter_column: str, filter_value: str) -> list[dict]:
     """Query a record from the database by filtering on a column value.
 
