@@ -57,27 +57,12 @@ class RDSClient:
     def __init__(self) -> None:
         self._pool = _get_pool()
 
-    # ── VULN-DATA-001 + VULN-MT-001: SQLi + no tenant scoping ─────────────────
-
-    def lookup_order(self, order_id: str) -> dict[str, Any]:
-        """Fetch an order by its ID.
-
-        # SECURITY FIXTURE: VULN-DATA-001 — order_id is interpolated directly
-        # into the SQL query string using an f-string. A caller supplying
-        # order_id="' OR '1'='1" will return all rows; supplying
-        # "'; DROP TABLE orders;--" will truncate the table (if the DB user
-        # has DDL privileges). No parameterised query is used.
-        #
-        # SECURITY FIXTURE: VULN-MT-001 — the query contains no tenant_id
-        # predicate. Any tenant's agent can supply any order_id and receive
-        # that order's full record, regardless of which tenant owns the order
-        # (Insecure Direct Object Reference / cross-tenant IDOR).
-        """
-        # Double vulnerability: f-string SQL + no tenant scope
-        sql = f"SELECT * FROM orders WHERE order_id = '{order_id}'"  # VULN-DATA-001, VULN-MT-001
+    def lookup_order(self, order_id: str, tenant_id: str) -> dict[str, Any]:
+        """Fetch an order by its ID, scoped to the given tenant."""
+        sql = "SELECT * FROM orders WHERE order_id = %s AND tenant_id = %s"
         with self._pool.connection() as conn:
             with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
-                cur.execute(sql)
+                cur.execute(sql, (order_id, tenant_id))
                 row = cur.fetchone()
         return dict(row) if row else {}
 
@@ -114,26 +99,15 @@ class RDSClient:
 
         return customer
 
-    def issue_refund(self, order_id: str, amount: float) -> bool:
-        """Apply a refund to an order record.
-
-        # SECURITY FIXTURE: VULN-DATA-001 — order_id is interpolated directly
-        # into the SQL UPDATE statement. A crafted order_id can escape the WHERE
-        # clause and update arbitrary rows (or all rows if the predicate is
-        # neutralised), e.g.: order_id = "' OR '1'='1" sets refund_amount on
-        # every order in the database.
-        #
-        # SECURITY FIXTURE: VULN-MT-001 — no tenant_id predicate. Any tenant's
-        # agent can refund any other tenant's orders (cross-tenant write IDOR).
-        """
+    def issue_refund(self, order_id: str, amount: float, tenant_id: str) -> bool:
+        """Apply a refund to an order record, scoped to the given tenant."""
         sql = (
-            f"UPDATE orders "  # VULN-DATA-001, VULN-MT-001
-            f"SET refund_amount = {amount}, status = 'refunded' "
-            f"WHERE order_id = '{order_id}'"
+            "UPDATE orders SET refund_amount = %s, status = 'refunded' "
+            "WHERE order_id = %s AND tenant_id = %s"
         )
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql)
+                cur.execute(sql, (amount, order_id, tenant_id))
                 affected = cur.rowcount
             conn.commit()
 
