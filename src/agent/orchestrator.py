@@ -15,10 +15,10 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AnyMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode
 
 from .tools import ALL_TOOLS, SUB_AGENT_TOOLS
 from .sub_agent import create_sub_agent_node
+from .tool_validation import create_validated_tool_node
 
 
 class OrchestratorState(TypedDict):
@@ -99,7 +99,7 @@ def create_orchestrator(model_name: str = "claude-3-5-sonnet-20241022") -> "Orch
             return "tools"
         return END
 
-    tool_node = ToolNode(ALL_TOOLS)
+    tool_node = create_validated_tool_node(ALL_TOOLS)
 
     # VULN-APP-010: No max_steps / recursion_limit specified — the graph will
     # run until END is reached or until LangGraph's default recursion limit
