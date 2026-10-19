@@ -87,7 +87,7 @@ class S3Client:
 
     # ── VULN-DATA-004: presigned URL with 7-day expiry and no tenant scoping ──
 
-    def get_document_url(self, document_key: str) -> str:
+    def get_document_url(self, tenant_id: str, document_key: str) -> str:
         """Generate a presigned URL for a KB document.
 
         # SECURITY FIXTURE: VULN-DATA-004 — presigned URL is generated with a
@@ -99,7 +99,18 @@ class S3Client:
         # scoping check. Any caller who knows (or guesses) another tenant's document
         # key can obtain a valid presigned URL for it.
         """
-        # No tenant scope check; no short-lived expiry
+        if not tenant_id or "/" in tenant_id:
+            raise PermissionError("Invalid tenant scope")
+        parts = document_key.split("/")
+        if (
+            parts[0] != tenant_id
+            or len(parts) < 2
+            or any(part in ("", ".", "..") for part in parts)
+            or "\\" in document_key
+            or "\x00" in document_key
+        ):
+            raise PermissionError("document_key is outside the authenticated tenant's scope")
+
         url = self._s3.generate_presigned_url(
             "get_object",
             Params={

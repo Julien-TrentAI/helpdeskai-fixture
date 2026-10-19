@@ -80,9 +80,8 @@ async def get_kb_document_url(
 ) -> dict:
     """Generate a presigned URL for a KB document.
 
-    NOTE: The underlying S3Client.get_document_url() has a 7-day expiry and
-    does not enforce per-tenant key scoping (VULN-DATA-004). That vulnerability
-    is in the data layer, not here — this route at least verifies the JWT.
+    The document_key must belong to the authenticated tenant (prefix
+    "{tenant_id}/"); otherwise 403 is returned.
     """
     try:
         validate_document_key(document_key)
@@ -92,5 +91,13 @@ async def get_kb_document_url(
         ) from exc
 
     client = S3Client()
-    url = client.get_document_url(document_key=document_key)
+    try:
+        url = client.get_document_url(
+            tenant_id=tenant.tenant_id, document_key=document_key
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="document_key is outside the authenticated tenant's scope.",
+        ) from exc
     return {"url": url, "document_key": document_key}
