@@ -92,7 +92,7 @@ class RDSClient:
         # address, and card_last4) written to the application log in plaintext.
         # An attacker with log access, a misconfigured log shipper, or a nosy
         # cloud-provider support engineer can read raw PII.
-        logger.info(f"Customer lookup: {customer}")  # VULN-DATA-002
+        logger.info("Customer lookup completed")
 
         return customer
 
