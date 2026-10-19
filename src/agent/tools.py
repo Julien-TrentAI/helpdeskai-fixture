@@ -69,6 +69,26 @@ def _validate_text(value: str, name: str, max_length: int) -> str:
     return value
 
 
+_TASK_INJECTION_RE = re.compile(
+    r"\b(system|instructions?|override|overrid(?:e|ing|den)|ignore|disregard|execute)\b"
+    r"|[\r\n\x00]"
+    r"|</?\s*(?:system|assistant|human|user)\s*>"
+    r"|<\|[^|>]*\|>"
+    r"|\[/?INST\]"
+    r"|^\s*(?:system|assistant|human|user)\s*:",
+    re.IGNORECASE,
+)
+MAX_TASK_LENGTH = 2_000
+
+
+def _validate_task_no_injection(task: str) -> str:
+    if not isinstance(task, str) or len(task) > MAX_TASK_LENGTH:
+        raise ValueError(f"task must be a string of at most {MAX_TASK_LENGTH} characters")
+    if _TASK_INJECTION_RE.search(task):
+        raise ValueError("task contains disallowed instruction-override patterns")
+    return task
+
+
 @tool
 def read_file(path: str) -> str:
     """Read the contents of a file at the given path and return them as a string.
@@ -200,6 +220,7 @@ def delegate_to_sub_agent(task: str) -> str:
     Args:
         task: A self-contained description of the sub-task to execute.
     """
+    task = _validate_task_no_injection(task)
     # Routing signal: the orchestrator graph routes to the `sub_agent` node when it
     # sees this tool call and runs the sub-agent with `task`. The return value here is
     # a placeholder — the sub-agent node produces the real result and answers this call.

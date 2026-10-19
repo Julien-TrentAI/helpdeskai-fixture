@@ -18,6 +18,8 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
+from src.agent.tools import _validate_task_no_injection
+
 
 class SubAgentState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
@@ -89,6 +91,8 @@ def create_sub_agent_node(tools: list[BaseTool]):
         if not task:
             task = state.get("context", {}).get("sub_agent_task", "")
 
+        # Defense in depth: the task may reach this node without passing the tool.
+        task = _validate_task_no_injection(task)
         result = compiled.invoke({"messages": [HumanMessage(content=task)], "result": ""})
         result_text = result["messages"][-1].content
 
