@@ -11,9 +11,10 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from ..auth.jwt_validator import get_current_tenant
 from ..logging_config import install_pii_redaction
 from .routers import admin, chat, kb
 
@@ -64,9 +65,9 @@ def create_app() -> FastAPI:
         return response
 
     # ── Routers ───────────────────────────────────────────────────────────────
-    app.include_router(chat.router, prefix="/v1", tags=["chat"])
-    app.include_router(kb.router, prefix="/v1", tags=["knowledge-base"])
-    app.include_router(admin.router, prefix="/v1", tags=["admin"])
+    app.include_router(chat.router, prefix="/v1", tags=["chat"], dependencies=[Depends(get_current_tenant)])
+    app.include_router(kb.router, prefix="/v1", tags=["knowledge-base"], dependencies=[Depends(get_current_tenant)])
+    app.include_router(admin.router, prefix="/v1", tags=["admin"], dependencies=[Depends(get_current_tenant)])
 
     @app.get("/healthz", tags=["ops"])
     async def health_check() -> dict:
