@@ -32,7 +32,7 @@ async def upload_kb_document(
     body: KBUploadRequest,
     # SECURITY FIXTURE: CTRL-AUTH-001 — this route correctly uses get_current_tenant,
     # which verifies the JWT signature and extracts tenant_id from the verified payload.
-    # Contrast with /v1/chat which reads the raw X-Tenant-Id header (VULN-MT-002).
+    # 
     tenant: TokenPayload = Depends(get_current_tenant),
 ) -> KBUploadResponse:
     """Upload a document to the authenticated tenant's knowledge base.
