@@ -156,10 +156,27 @@ resource "aws_iam_role_policy" "app" {
   role = aws_iam_role.app.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["s3:*", "dynamodb:*"] # VULN-CLOUD-001
-      Resource = "*"                    # VULN-CLOUD-001
-    }]
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket"]
+        Resource = [
+          "arn:aws:s3:::helpdeskai-kb-docs",
+          "arn:aws:s3:::helpdeskai-kb-docs/*",
+          "arn:aws:s3:::*-kb-docs",
+          "arn:aws:s3:::*-kb-docs/*",
+          "arn:aws:s3:::helpdeskai-attachments",
+          "arn:aws:s3:::helpdeskai-attachments/*",
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = ["dynamodb:Query", "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Scan"]
+        Resource = [
+          "arn:aws:dynamodb:us-east-1:*:table/helpdeskAI-tickets",
+          "arn:aws:dynamodb:us-east-1:*:table/helpdeskAI-tenant-config",
+        ]
+      },
+    ]
   })
 }
