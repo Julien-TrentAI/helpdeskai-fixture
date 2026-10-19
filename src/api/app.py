@@ -51,7 +51,7 @@ def create_app() -> FastAPI:
         allow_origins=["https://app.helpdeskAI.example"],
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["Authorization", "X-Tenant-Id", "X-Request-Id", "Content-Type"],
+        allow_headers=["Authorization", "X-Request-Id", "Content-Type"],
     )
 
     # ── Request ID middleware ─────────────────────────────────────────────────

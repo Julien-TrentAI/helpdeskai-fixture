@@ -76,12 +76,25 @@ def test_get_kb_document_rejects_traversal_key():
             validate_document_key(key)
 
 
-def test_chat_rejects_malformed_tenant_header():
+def test_chat_ignores_tenant_header_and_requires_jwt():
     from src.api.app import create_app
 
     client = TestClient(create_app())
-    for bad in ["a b", "t1'; DROP TABLE x;--", "x" * 65]:
-        resp = client.post(
-            "/v1/chat", json={"message": "hi"}, headers={"X-Tenant-Id": bad}
-        )
-        assert resp.status_code == 400
+    resp = client.post(
+        "/v1/chat", json={"message": "hi"}, headers={"X-Tenant-Id": "other-tenant"}
+    )
+    assert resp.status_code == 401
+
+
+def test_chat_rejects_forged_jwt():
+    import jwt
+    from src.api.app import create_app
+
+    forged = jwt.encode({"tenant_id": "victim"}, "wrong-secret", algorithm="HS256")
+    client = TestClient(create_app())
+    resp = client.post(
+        "/v1/chat",
+        json={"message": "hi"},
+        headers={"Authorization": f"Bearer {forged}", "X-Tenant-Id": "victim"},
+    )
+    assert resp.status_code == 401
