@@ -9,6 +9,7 @@ headers are never used for tenant resolution.
 
 from __future__ import annotations
 
+import html
 import logging
 import uuid
 
@@ -42,6 +43,7 @@ async def chat(
         tenant_id=tenant_id,
         thread_id=thread_id,
     )
+    reply = html.escape(reply)
 
     return ChatResponse(
         reply=reply,
