@@ -212,12 +212,10 @@ resource "aws_iam_role" "app" {
   })
 }
 
-# SECURITY FIXTURE: VULN-CLOUD-001 — the application role is granted s3:* and
-# dynamodb:* on Resource "*". A compromise of the app (e.g. via the agent's RCE
-# tool, or a CI agent reading these creds) yields full read/write/delete over EVERY
-# bucket and table in the account, across all tenants. The least-privilege version
-# would scope actions to the specific buckets/tables and to GetObject/PutObject /
-# Query/PutItem only.
+# Least-privilege: actions are limited to GetObject/PutObject/ListBucket and
+# Query/GetItem/PutItem, scoped to the specific buckets and tables below.
+data "aws_caller_identity" "current" {}
+
 resource "aws_iam_role_policy" "app" {
   name = "helpdeskai-app-policy"
   role = aws_iam_role.app.id
@@ -226,23 +224,33 @@ resource "aws_iam_role_policy" "app" {
     Statement = [
       {
         Effect = "Allow"
-        Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket"]
+        Action = ["s3:GetObject", "s3:PutObject"]
         Resource = [
-          "arn:aws:s3:::helpdeskai-kb-docs",
-          "arn:aws:s3:::helpdeskai-kb-docs/*",
-          "arn:aws:s3:::*-kb-docs",
-          "arn:aws:s3:::*-kb-docs/*",
-          "arn:aws:s3:::helpdeskai-attachments",
-          "arn:aws:s3:::helpdeskai-attachments/*",
+          "${aws_s3_bucket.kb_docs.arn}/*",
+          "${aws_s3_bucket.attachments.arn}/*",
         ]
       },
       {
         Effect = "Allow"
-        Action = ["dynamodb:Query", "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Scan"]
+        Action = ["s3:ListBucket"]
         Resource = [
-          "arn:aws:dynamodb:us-east-1:*:table/helpdeskAI-tickets",
-          "arn:aws:dynamodb:us-east-1:*:table/helpdeskAI-tenant-config",
+          aws_s3_bucket.kb_docs.arn,
+          aws_s3_bucket.attachments.arn,
         ]
+      },
+      {
+        # Query-only access keyed on tenant_id; no Scan.
+        Effect = "Allow"
+        Action = ["dynamodb:Query", "dynamodb:GetItem", "dynamodb:PutItem"]
+        Resource = [
+          aws_dynamodb_table.tickets.arn,
+          "arn:aws:dynamodb:us-east-1:${data.aws_caller_identity.current.account_id}:table/helpdeskAI-tenant-config",
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = [aws_kms_key.attachments.arn]
       },
     ]
   })
