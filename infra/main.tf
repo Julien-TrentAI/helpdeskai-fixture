@@ -6,7 +6,6 @@
 # PLANTED FINDINGS:
 #   VULN-DATA-003 (High):     KB bucket is public-read and has no server-side encryption
 #   VULN-CLOUD-001 (Critical): IAM policy grants s3:* and dynamodb:* on Resource "*"
-#   VULN-CLOUD-002 (High):     hardcoded AWS access key / secret in the provider block
 # POSITIVE CONTROLS:
 #   CTRL-CLOUD-001: attachments bucket enforces SSE-KMS + full public-access block
 
@@ -23,15 +22,26 @@ terraform {
   }
 }
 
-# SECURITY FIXTURE: VULN-CLOUD-002 — static, long-lived AWS credentials hardcoded
-# directly in the provider block (and committed to the repo). These should come from
-# an assumed role / OIDC / environment, never be checked in. A leaked repo leaks the
-# keys; the CI coding agents (see .github/workflows) run with repo access and could
-# read these via prompt injection (see cross-surface CHAIN-2 in EXPECTED_FINDINGS.md).
+# No static credentials. The provider resolves temporary credentials from the standard
+# AWS chain: in CI, AWS OIDC (the workflow's role-to-assume exports a web identity token /
+# session credentials); locally, an assumed IAM role (set `deploy_role_arn`, or use an
+# AWS SSO / `aws sso login` profile). Nothing secret is stored on disk or in the repo.
+variable "deploy_role_arn" {
+  description = "IAM role Terraform assumes for local development (leave null in CI, where OIDC supplies the role)"
+  type        = string
+  default     = null
+}
+
 provider "aws" {
-  region     = "us-east-1"
-  access_key = "AKIAIOSFODNN7EXAMPLE"                         # VULN-CLOUD-002
-  secret_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"     # VULN-CLOUD-002
+  region = "us-east-1"
+
+  dynamic "assume_role" {
+    for_each = var.deploy_role_arn == null ? [] : [var.deploy_role_arn]
+    content {
+      role_arn     = assume_role.value
+      session_name = "terraform-local"
+    }
+  }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
