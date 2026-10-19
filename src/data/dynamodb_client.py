@@ -16,7 +16,7 @@ import uuid
 from typing import Any
 
 import boto3
-from boto3.dynamodb.conditions import Attr, Key
+from boto3.dynamodb.conditions import Key
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +50,8 @@ class DynamoDBClient:
         # SECURITY FIXTURE: CTRL-DATA-001 — create_ticket CORRECTLY uses the
         # tenant_id (sourced from the verified JWT) as the DynamoDB partition key.
         # This ensures the ticket is written to and readable only within the
-        # tenant's own slice of the table. Contrast with scan_tickets_for_tenant
-        # below, which reads ALL tenant data before filtering.
+        # tenant's own slice of the table.
+        # Ticket reads must use get_tickets_for_tenant (Query), never Scan.
         """
         ticket_id = str(uuid.uuid4())
         item = {
@@ -68,49 +68,6 @@ class DynamoDBClient:
             extra={"tenant_id": tenant_id, "ticket_id": ticket_id},
         )
         return item
-
-    # ── Vulnerability: Scan + FilterExpression instead of Query ───────────────
-
-    def scan_tickets_for_tenant(
-        self,
-        tenant_id: str,
-        status_filter: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """Return all open tickets for a tenant.
-
-        # SECURITY FIXTURE: VULN-MT-004 — this method performs a DynamoDB *Scan*
-        # across ALL items in the table and applies a FilterExpression to retain
-        # only the matching tenant. The Scan reads every item from every tenant
-        # before filtering client-side. This has two consequences:
-        #
-        #   1. Cross-tenant data exposure risk: all tenant records are read into
-        #      process memory during the scan; a bug in the filter logic (e.g.,
-        #      wrong attribute name, condition inversion) would expose other
-        #      tenants' tickets to the caller.
-        #
-        #   2. Cost and latency: consumed RCUs scale with table size, not result
-        #      size, making this O(all tenants) regardless of how many tickets the
-        #      target tenant has.
-        #
-        # The correct pattern is Query with KeyConditionExpression=Key('tenant_id').eq(tenant_id),
-        # which is constrained to the tenant's partition at the storage layer.
-        """
-        filter_expr = Attr("tenant_id").eq(tenant_id)
-        if status_filter:
-            filter_expr = filter_expr & Attr("status").eq(status_filter)
-
-        response = self._table.scan(FilterExpression=filter_expr)
-        items = response.get("Items", [])
-
-        # Paginate (also scanning all pages — still reads every tenant's data)
-        while "LastEvaluatedKey" in response:
-            response = self._table.scan(
-                FilterExpression=filter_expr,
-                ExclusiveStartKey=response["LastEvaluatedKey"],
-            )
-            items.extend(response.get("Items", []))
-
-        return items
 
     # ── Correct: tenant-scoped Query ──────────────────────────────────────────
 
