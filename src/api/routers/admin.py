@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 import boto3
 
@@ -49,6 +49,12 @@ async def list_all_tenants(
     # account can enumerate all tenants and use that information to target
     # cross-tenant attacks (e.g., combining with VULN-MT-001 / VULN-MT-002).
     """
+    if tenant.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role required.",
+        )
+
     dynamodb = boto3.resource("dynamodb", region_name=_AWS_REGION)
     table = dynamodb.Table(_TENANT_TABLE)
 

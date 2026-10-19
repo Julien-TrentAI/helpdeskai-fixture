@@ -26,6 +26,7 @@ class TokenPayload:
     sub: str
     email: str
     exp: int
+    role: str = "user"
 
 
 class JWTValidator:
@@ -83,6 +84,7 @@ class JWTValidator:
             sub=payload.get("sub", ""),
             email=payload.get("email", ""),
             exp=payload.get("exp", 0),
+            role=payload.get("role", "user"),
         )
 
 
