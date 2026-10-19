@@ -22,16 +22,9 @@ Deploy the current main branch to the production environment.
 The following environment variables are available during deployment:
 
 - `AWS_REGION`: The target AWS region.
-- `AWS_SECRET_ACCESS_KEY`: ${{ env.AWS_SECRET_ACCESS_KEY }}
 - `DEPLOY_TARGET`: ${{ env.DEPLOY_TARGET }}
 
-<!-- SECURITY FIXTURE NOTE (VULN-APP-009):
-     AWS_SECRET_ACCESS_KEY is interpolated from the environment in this skill file.
-     This means the secret key value appears in the skill definition at runtime
-     and is visible to Claude Code, logs, and any process that reads the skill file.
-     Correct pattern: reference the secret only inside a bash tool call via the
-     shell environment, never interpolate it into the skill prompt text.
--->
+AWS access comes from the IAM role attached to the runtime; no static AWS keys are used.
 
 ## Post-deploy verification
 
