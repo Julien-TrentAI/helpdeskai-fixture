@@ -1,8 +1,6 @@
 """Admin route handlers for HelpDeskAI.
 
-These routes are intended for internal use only but are exposed without
-proper authorization controls — any authenticated user (regardless of role)
-can access them.
+Every route on this router requires a verified JWT carrying the admin role.
 """
 
 from __future__ import annotations
@@ -20,7 +18,21 @@ from ..models import TenantInfo
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+
+
+async def require_admin(
+    tenant: TokenPayload = Depends(get_current_tenant),
+) -> TokenPayload:
+    """FastAPI dependency: allow only callers whose verified JWT role is admin."""
+    if tenant.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role required.",
+        )
+    return tenant
+
+
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 _AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 _TENANT_TABLE = "helpdeskAI-tenant-config"
@@ -31,30 +43,8 @@ _TENANT_TABLE = "helpdeskAI-tenant-config"
     response_model=list[TenantInfo],
     status_code=status.HTTP_200_OK,
 )
-async def list_all_tenants(
-    tenant: TokenPayload = Depends(get_current_tenant),
-) -> list[TenantInfo]:
-    """List all tenants registered in the system.
-
-    # SECURITY FIXTURE: VULN-AUTH-002 — this admin route has NO authorization
-    # check beyond a valid JWT signature. Any authenticated caller (any tenant,
-    # any role) can invoke this endpoint and receive a full listing of every
-    # tenant in the system — including tenant IDs, names, and plan tiers.
-    #
-    # The missing control is a role check such as:
-    #   if payload.get("role") != "admin":
-    #       raise HTTPException(status_code=403, detail="Admin role required.")
-    #
-    # Without it, a support agent, a trial customer, or a compromised service
-    # account can enumerate all tenants and use that information to target
-    # cross-tenant attacks (e.g., combining with VULN-MT-001 / VULN-MT-002).
-    """
-    if tenant.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin role required.",
-        )
-
+async def list_all_tenants() -> list[TenantInfo]:
+    """List all tenants registered in the system (admin role required)."""
     dynamodb = boto3.resource("dynamodb", region_name=_AWS_REGION)
     table = dynamodb.Table(_TENANT_TABLE)
 
