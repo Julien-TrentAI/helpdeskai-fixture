@@ -117,15 +117,42 @@ def test_admin_tenants_requires_admin_role():
     import jwt
 
     from src.api.app import create_app
-    from src.auth.jwt_validator import JWT_ALGORITHM, JWT_SECRET
+    from src.auth.jwt_validator import (
+        JWT_ALGORITHM,
+        JWT_AUDIENCE,
+        JWT_ISSUER,
+        JWT_SECRET,
+    )
 
     client = TestClient(create_app())
 
     def token(role):
-        claims = {"tenant_id": "t1", "sub": "u1", "exp": 4102444800, "role": role}
+        claims = {
+            "tenant_id": "t1",
+            "sub": "u1",
+            "exp": 4102444800,
+            "role": role,
+            "aud": JWT_AUDIENCE,
+            "iss": JWT_ISSUER,
+        }
         return jwt.encode(claims, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
     resp = client.get(
         "/v1/admin/tenants", headers={"Authorization": f"Bearer {token('user')}"}
     )
     assert resp.status_code == 403
+
+
+def test_jwt_missing_aud_or_iss_rejected():
+    import jwt
+
+    from src.api.app import create_app
+    from src.auth.jwt_validator import JWT_ALGORITHM, JWT_SECRET
+
+    client = TestClient(create_app())
+    claims = {"tenant_id": "t1", "sub": "u1", "exp": 4102444800}
+    tok = jwt.encode(claims, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    resp = client.post(
+        "/v1/chat", json={"message": "hi"}, headers={"Authorization": f"Bearer {tok}"}
+    )
+    assert resp.status_code == 401

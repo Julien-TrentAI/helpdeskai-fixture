@@ -14,8 +14,19 @@ from fastapi.security import OAuth2PasswordBearer
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v1/auth/token")
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "changeme-replace-in-production")
+
+
+def _require_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} environment variable must be set")
+    return value
+
+
+JWT_SECRET = _require_env("JWT_SECRET")
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
+JWT_AUDIENCE = _require_env("JWT_AUDIENCE")
+JWT_ISSUER = _require_env("JWT_ISSUER")
 
 
 @dataclass
@@ -36,9 +47,13 @@ class JWTValidator:
     Algorithm is pinned to prevent the 'none' algorithm attack.
     """
 
-    def __init__(self, secret: str, algorithm: str = "HS256") -> None:
+    def __init__(
+        self, secret: str, algorithm: str = "HS256", audience: str = "", issuer: str = ""
+    ) -> None:
         self.secret = secret
         self.algorithm = algorithm
+        self.audience = audience
+        self.issuer = issuer
 
     def validate(self, token: str) -> TokenPayload:
         """Decode and verify a JWT, returning the structured payload.
@@ -57,6 +72,9 @@ class JWTValidator:
                 token,
                 self.secret,
                 algorithms=[self.algorithm],
+                audience=self.audience,
+                issuer=self.issuer,
+                options={"require": ["exp", "tenant_id", "aud", "iss"]},
             )
         except jwt.ExpiredSignatureError:
             raise HTTPException(
@@ -88,7 +106,12 @@ class JWTValidator:
         )
 
 
-_validator = JWTValidator(secret=JWT_SECRET, algorithm=JWT_ALGORITHM)
+_validator = JWTValidator(
+    secret=JWT_SECRET,
+    algorithm=JWT_ALGORITHM,
+    audience=JWT_AUDIENCE,
+    issuer=JWT_ISSUER,
+)
 
 
 async def get_current_tenant(token: str = Depends(oauth2_scheme)) -> TokenPayload:
