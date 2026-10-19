@@ -156,6 +156,20 @@ resource "aws_secretsmanager_secret_version" "rds_credentials" {
   })
 }
 
+variable "rds_rotation_lambda_arn" {
+  description = "ARN of the Secrets Manager rotation Lambda for the RDS PostgreSQL credentials"
+  type        = string
+}
+
+resource "aws_secretsmanager_secret_rotation" "rds_credentials" {
+  secret_id           = aws_secretsmanager_secret.rds_credentials.id
+  rotation_lambda_arn = var.rds_rotation_lambda_arn
+
+  rotation_rules {
+    automatically_after_days = 30
+  }
+}
+
 variable "private_subnet_ids" {
   description = "Private subnet IDs (no route to an internet gateway) for the RDS subnet group"
   type        = list(string)
@@ -261,6 +275,17 @@ resource "aws_iam_role_policy" "app" {
         Effect   = "Allow"
         Action   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
         Resource = [aws_kms_key.attachments.arn]
+      },
+      {
+        # Read-only access to the RDS credentials secret (and its CMK).
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [aws_secretsmanager_secret.rds_credentials.arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = [aws_kms_key.rds.arn]
       },
     ]
   })
