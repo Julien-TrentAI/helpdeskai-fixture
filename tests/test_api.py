@@ -98,3 +98,16 @@ def test_chat_rejects_forged_jwt():
         headers={"Authorization": f"Bearer {forged}", "X-Tenant-Id": "victim"},
     )
     assert resp.status_code == 401
+
+
+def test_all_routes_except_healthz_require_jwt():
+    from src.api.app import create_app
+
+    client = TestClient(create_app())
+    for route in client.app.routes:
+        path = getattr(route, "path", "")
+        if not path.startswith("/v1"):
+            continue
+        for method in route.methods - {"HEAD", "OPTIONS"}:
+            resp = client.request(method, path.replace("{document_key:path}", "x"))
+            assert resp.status_code == 401, (method, path)

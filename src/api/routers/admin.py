@@ -9,40 +9,21 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
 
-import jwt
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import APIRouter, Depends, status
 
 import boto3
+
+from src.auth.jwt_validator import TokenPayload, get_current_tenant
 
 from ..models import TenantInfo
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v1/auth/token")
 
-_JWT_SECRET = os.environ.get("JWT_SECRET", "changeme-replace-in-production")
 _AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 _TENANT_TABLE = "helpdeskAI-tenant-config"
-
-
-def _verify_token(token: str) -> dict[str, Any]:
-    """Verify JWT signature and return the decoded payload.
-
-    Signature verification IS enabled here. The problem is the caller's ROLE
-    is never checked — any valid JWT, for any tenant, passes.
-    """
-    try:
-        return jwt.decode(token, _JWT_SECRET, algorithms=["HS256"])
-    except jwt.InvalidTokenError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token.",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
 
 
 @router.get(
@@ -51,7 +32,7 @@ def _verify_token(token: str) -> dict[str, Any]:
     status_code=status.HTTP_200_OK,
 )
 async def list_all_tenants(
-    token: str = Depends(oauth2_scheme),
+    tenant: TokenPayload = Depends(get_current_tenant),
 ) -> list[TenantInfo]:
     """List all tenants registered in the system.
 
@@ -68,10 +49,6 @@ async def list_all_tenants(
     # account can enumerate all tenants and use that information to target
     # cross-tenant attacks (e.g., combining with VULN-MT-001 / VULN-MT-002).
     """
-    payload = _verify_token(token)
-    # BUG: role is decoded from the JWT but never checked.
-    _role = payload.get("role", "user")  # VULN-AUTH-002: decoded but not enforced
-
     dynamodb = boto3.resource("dynamodb", region_name=_AWS_REGION)
     table = dynamodb.Table(_TENANT_TABLE)
 
