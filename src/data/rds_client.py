@@ -8,28 +8,46 @@ IDOR (Insecure Direct Object Reference) attacks.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any
 
+import boto3
 import psycopg
+from psycopg.conninfo import make_conninfo
 from psycopg_pool import ConnectionPool
 
 logger = logging.getLogger(__name__)
 
-_DSN = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://helpdeskAI_app:changeme@localhost:5432/orders",
-)
+_SECRET_ID = os.environ.get("RDS_SECRET_ID", "helpdeskai/rds/orders-credentials")
 
 # Module-level connection pool — shared across all requests in the process.
 _pool: ConnectionPool | None = None
 
 
+def _build_dsn() -> str:
+    """Build the DSN from the Secrets Manager credentials (rotated automatically)."""
+    client = boto3.client("secretsmanager")
+    secret = json.loads(client.get_secret_value(SecretId=_SECRET_ID)["SecretString"])
+    return make_conninfo(
+        host=os.environ["DB_HOST"],
+        port=int(os.environ.get("DB_PORT", "5432")),
+        dbname=os.environ.get("DB_NAME", "orders"),
+        user=secret["username"],
+        password=secret["password"],
+    )
+
+
 def _get_pool() -> ConnectionPool:
     global _pool
     if _pool is None:
-        _pool = ConnectionPool(conninfo=_DSN, min_size=2, max_size=10)
+        _pool = ConnectionPool(
+            conninfo=_build_dsn(),
+            min_size=2,
+            max_size=10,
+            max_lifetime=900,  # recycle connections so rotated credentials get picked up
+        )
     return _pool
 
 
