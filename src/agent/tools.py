@@ -135,7 +135,7 @@ def lookup_order(order_id: str, tenant_id: str) -> dict:
     # accepted but ignored by the underlying query.
     _validate_id(order_id, "order_id")
     _validate_id(tenant_id, "tenant_id")
-    return RDSClient().lookup_order(order_id)
+    return RDSClient().lookup_order(order_id, tenant_id)
 
 
 @tool
@@ -152,7 +152,7 @@ def issue_refund(order_id: str, amount: float, tenant_id: str) -> bool:
     _validate_id(order_id, "order_id")
     _validate_id(tenant_id, "tenant_id")
     amount = _validate_refund_amount(amount)
-    return RDSClient().issue_refund(order_id, amount)
+    return RDSClient().issue_refund(order_id, amount, tenant_id)
 
 
 @tool
