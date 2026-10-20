@@ -6,7 +6,7 @@ for use as a Trent scan validation fixture. Do NOT use this code in production.
 
 Planted findings (application tier):
   VULN-APP-001: run_shell — RCE via shell=True with user-supplied command string
-  VULN-APP-002: fetch_url — SSRF via user-supplied URL with no allowlist or redirect cap
+  VULN-APP-002: fetch_url — (fixed) HTTPS host allowlist, private-range blocking, redirect cap
   VULN-APP-003: read_file — path traversal via user-supplied path with no sandbox
 
 The HelpDeskAI domain tools below wire the support agent into the tenant data layer
@@ -15,10 +15,15 @@ what makes the agent able to reach tenant data, and what makes CHAIN-1 (chat
 prompt-injection -> un-tenant-scoped lookup -> cross-tenant PII) concrete.
 """
 
+import ipaddress
 import logging
 import math
+import os
 import re
+import socket
 import subprocess
+import urllib.error
+import urllib.parse
 import urllib.request
 from langchain_core.tools import tool
 
@@ -143,21 +148,63 @@ def run_shell(command: str) -> str:
     return _truncate_output("run_shell", result.stdout + result.stderr)
 
 
+MAX_FETCH_REDIRECTS = 2
+
+
+def _allowed_fetch_hosts() -> frozenset:
+    """Approved HTTPS hosts, from the comma-separated FETCH_URL_ALLOWED_HOSTS env var.
+
+    Empty by default, which denies every destination.
+    """
+    raw = os.environ.get("FETCH_URL_ALLOWED_HOSTS", "")
+    return frozenset(h.strip().lower().rstrip(".") for h in raw.split(",") if h.strip())
+
+
+def _validate_fetch_url(url: str) -> str:
+    if not isinstance(url, str):
+        raise ValueError("url must be a string")
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "https":
+        raise ValueError("only https URLs are allowed")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("URLs with embedded credentials are not allowed")
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host or host not in _allowed_fetch_hosts():
+        raise ValueError("url host is not in the approved allowlist")
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        raise ValueError("url host could not be resolved")
+    for info in infos:
+        addr = ipaddress.ip_address(info[4][0].split("%")[0])
+        if addr.version == 6 and addr.ipv4_mapped:
+            addr = addr.ipv4_mapped
+        if not addr.is_global or addr.is_multicast:
+            raise ValueError("url resolves to a blocked address range")
+    return url
+
+
+class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
+    max_redirections = MAX_FETCH_REDIRECTS
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_fetch_url(urllib.parse.urljoin(req.full_url, newurl))
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 @tool
 def fetch_url(url: str) -> str:
-    """Fetch the contents of a URL and return the response body as a string.
+    """Fetch the contents of an approved HTTPS URL and return the response body as a string.
 
     Args:
-        url: The URL to fetch. HTTP and HTTPS are supported.
+        url: The URL to fetch. Only HTTPS URLs on approved hosts are allowed.
 
     Returns:
         str, truncated to 50,000 characters.
     """
-    # VULN-APP-002: No URL allowlist, no redirect cap, no IP range blocking.
-    # An attacker can supply "http://169.254.169.254/latest/meta-data/" to reach
-    # EC2 instance metadata, or "http://internal-service/" to reach services on
-    # the agent's internal network (SSRF).
-    with urllib.request.urlopen(url, timeout=10) as response:
+    _validate_fetch_url(url)
+    opener = urllib.request.build_opener(_ValidatingRedirectHandler)
+    with opener.open(url, timeout=10) as response:
         return _truncate_output(
             "fetch_url", response.read().decode("utf-8", errors="replace")
         )
