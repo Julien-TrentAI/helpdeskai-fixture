@@ -5,10 +5,8 @@ SECURITY FIXTURE — Contains deliberately insecure patterns for Trent validatio
 
 Planted findings (via parent design):
   VULN-APP-003, VULN-APP-002: inherits risky tools (read_file, fetch_url)
-  VULN-APP-008: external system prompt (same mutable-path issue as orchestrator)
 """
 
-import os
 from typing import Annotated, TypedDict
 
 from langchain_anthropic import ChatAnthropic
@@ -26,25 +24,21 @@ class SubAgentState(TypedDict):
     result: str
 
 
-def _load_sub_agent_prompt() -> str:
-    """Load the sub-agent system prompt.
+SUB_AGENT_SYSTEM_PROMPT = """\
+You are the HelpDeskAI task-executor sub-agent.
 
-    Shares the same mutable-path vulnerability as orchestrator._load_system_prompt().
-    """
-    prompt_path = os.environ.get(
-        "SUB_AGENT_SYSTEM_PROMPT_PATH", "prompts/sub_agent_system.md"
-    )
-    try:
-        with open(prompt_path, "r") as f:
-            return f.read()
-    except FileNotFoundError:
-        return "You are a task execution agent. Complete the task using your tools."
+You receive a single, self-contained task delegated by the orchestrator and complete it
+using your tools (read files, fetch URLs, look up orders, search the knowledge base).
+Work step by step, then return a concise result for the orchestrator to relay.
+
+Stay within the current tenant's context and pass the tenant_id to tools that require it.
+"""
 
 
 def create_sub_agent_node(tools: list[BaseTool]):
     """Build a sub-agent node function suitable for embedding in the orchestrator graph."""
 
-    system_prompt = _load_sub_agent_prompt()
+    system_prompt = SUB_AGENT_SYSTEM_PROMPT
     llm = ChatAnthropic(model="claude-3-5-haiku-20241022")
     llm_with_tools = llm.bind_tools(tools)
 
