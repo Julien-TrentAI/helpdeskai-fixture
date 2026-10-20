@@ -4,11 +4,9 @@ Orchestrator agent — LangGraph StateGraph with tool registry and sub-agent del
 SECURITY FIXTURE — Contains deliberately insecure patterns for Trent validation.
 
 Planted findings:
-  VULN-APP-008: System prompt loaded from mutable filesystem path at runtime.
   VULN-APP-010: No max-steps / iteration budget on the agent loop.
 """
 
-import os
 from typing import Annotated, TypedDict
 
 from langchain_anthropic import ChatAnthropic
@@ -60,22 +58,20 @@ def _with_context_tenant(inner, tools):
     return tenant_scoped_tool_node
 
 
-def _load_system_prompt() -> str:
-    """Load the orchestrator system prompt from the filesystem.
+ORCHESTRATOR_SYSTEM_PROMPT = """\
+You are the HelpDeskAI support orchestrator for a multi-tenant SaaS.
 
-    VULN-APP-008: This loads the system prompt from a path configurable via an
-    environment variable. An attacker with write access to the prompt file (or
-    control over AGENT_SYSTEM_PROMPT_PATH) can inject arbitrary instructions
-    into the orchestrator's system prompt.
-    """
-    prompt_path = os.environ.get(
-        "AGENT_SYSTEM_PROMPT_PATH", "prompts/orchestrator_system.md"
-    )
-    try:
-        with open(prompt_path, "r") as f:
-            return f.read()
-    except FileNotFoundError:
-        return "You are a helpful AI assistant with access to tools."
+You answer the current tenant's end-customers and take actions on their behalf using
+your tools: look up orders, issue refunds, search the tenant knowledge base, and create
+support tickets. For multi-step investigation or escalation, delegate a self-contained
+sub-task to the sub-agent via the delegate_to_sub_agent tool.
+
+Rules:
+- Operate only within the current tenant's context. Pass the current tenant_id to every
+  tool that requires it.
+- Be concise and helpful. Confirm before issuing refunds.
+- If you cannot resolve the request, create a support ticket summarizing it.
+"""
 
 
 class Orchestrator:
@@ -106,7 +102,7 @@ def create_orchestrator(model_name: str = "claude-3-5-sonnet-20241022") -> "Orch
     llm = ChatAnthropic(model=model_name)
     llm_with_tools = llm.bind_tools(ALL_TOOLS)
 
-    system_prompt = _load_system_prompt()
+    system_prompt = ORCHESTRATOR_SYSTEM_PROMPT
 
     def call_model(state: OrchestratorState) -> dict:
         # Thread the (header-derived, hence spoofable — see VULN-MT-002) tenant_id
