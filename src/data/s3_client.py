@@ -30,31 +30,35 @@ class S3Client:
     def __init__(self, region: str = _AWS_REGION) -> None:
         self._s3 = boto3.client("s3", region_name=region)
 
-    # ── VULN-MT-003: KB search without per-tenant prefix enforcement ──────────
-
     def search_kb(self, tenant_id: str, document_prefix: str) -> list[dict[str, Any]]:
-        """List KB documents matching a prefix.
+        """List KB documents matching a prefix inside the caller's tenant folder.
 
-        # SECURITY FIXTURE: VULN-MT-003 — document_prefix is taken from the
-        # agent's input without enforcing a per-tenant prefix. An attacker (or a
-        # misbehaving agent) can supply "../other-tenant/" or an absolute path like
-        # "acme-corp/confidential/" to enumerate and read another tenant's knowledge
-        # base documents. The tenant_id argument is accepted but IGNORED in the
-        # prefix construction.
-        #
-        # The correct implementation would build the prefix as:
-        #   f"{tenant_id}/{document_prefix}"
-        # so the request is always constrained to the caller's own KB bucket path.
+        The listing prefix is always f"{tenant_id}/{document_prefix}", matching the
+        key layout of upload_kb_document, and returned keys are re-checked against
+        that tenant prefix.
         """
-        kb_bucket = f"{tenant_id}-kb-docs"
+        if not tenant_id or "/" in tenant_id:
+            raise PermissionError("Invalid tenant scope")
+        if (
+            not isinstance(document_prefix, str)
+            or document_prefix.startswith("/")
+            or "\\" in document_prefix
+            or "\x00" in document_prefix
+            or ".." in document_prefix.split("/")
+        ):
+            raise PermissionError("document_prefix is outside the authenticated tenant's scope")
 
-        # BUG: uses document_prefix directly instead of f"{tenant_id}/{document_prefix}"
-        # This allows path traversal across tenant KB buckets.
+        kb_bucket = f"{tenant_id}-kb-docs"
+        tenant_prefix = f"{tenant_id}/"
+        scoped_prefix = f"{tenant_prefix}{document_prefix}"
+
         paginator = self._s3.get_paginator("list_objects_v2")
         results: list[dict[str, Any]] = []
 
-        for page in paginator.paginate(Bucket=kb_bucket, Prefix=document_prefix):  # VULN-MT-003
+        for page in paginator.paginate(Bucket=kb_bucket, Prefix=scoped_prefix):
             for obj in page.get("Contents", []):
+                if not obj["Key"].startswith(tenant_prefix):
+                    continue
                 results.append(
                     {
                         "key": obj["Key"],

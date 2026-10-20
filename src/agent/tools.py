@@ -218,9 +218,8 @@ def search_kb(query_prefix: str, tenant_id: str) -> list:
     Returns:
         list of dict(key=str, size=int, last_modified=str).
     """
-    # SECURITY FIXTURE: VULN-MT-003 (transitive) — query_prefix flows into
-    # S3Client.search_kb, which does not enforce a per-tenant prefix; "../other/"
-    # reaches another tenant's KB.
+    # query_prefix is validated here and S3Client.search_kb always prepends
+    # f"{tenant_id}/", so it cannot reach another tenant's KB folder.
     _validate_id(tenant_id, "tenant_id")
     _validate_query_prefix(query_prefix)
     return S3Client().search_kb(tenant_id, query_prefix)
