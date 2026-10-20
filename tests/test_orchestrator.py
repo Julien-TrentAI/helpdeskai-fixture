@@ -33,7 +33,8 @@ def test_all_tools_in_registry():
     from src.agent.tools import ALL_TOOLS
     tool_names = {t.name for t in ALL_TOOLS}
     # ops tools
-    assert {"read_file", "run_shell", "fetch_url"}.issubset(tool_names)
+    assert {"read_file", "fetch_url"}.issubset(tool_names)
+    assert "run_shell" not in tool_names
     # HelpDeskAI domain tools (operate on tenant data)
     assert {"lookup_order", "issue_refund", "search_kb", "create_ticket"}.issubset(tool_names)
     # multi-agent delegation tool (routes to the sub-agent node)
