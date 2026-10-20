@@ -7,7 +7,7 @@ for use as a Trent scan validation fixture. Do NOT use this code in production.
 Planted findings (application tier):
   VULN-APP-001: run_shell — RCE via shell=True with user-supplied command string
   VULN-APP-002: fetch_url — (fixed) HTTPS host allowlist, private-range blocking, redirect cap
-  VULN-APP-003: read_file — path traversal via user-supplied path with no sandbox
+  VULN-APP-003: read_file — (fixed) path allowlist, traversal/symlink and secret-file denial
 
 The HelpDeskAI domain tools below wire the support agent into the tenant data layer
 (src/data/*). They carry the multi-tenancy + database findings transitively — this is
@@ -108,20 +108,44 @@ def _validate_task_no_injection(task: str) -> str:
     return task
 
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Application-designated directories the support tasks may read from.
+READ_ALLOWED_ROOTS = tuple(
+    os.path.realpath(os.path.join(_REPO_ROOT, d)) for d in ("prompts",)
+)
+
+_READ_DENIED_NAME_RE = re.compile(
+    r"^(\.env($|[.\-_])|.*\.env$|\.netrc$|credentials$|id_(rsa|ed25519|ecdsa|dsa)$|.*\.(pem|key)$)",
+    re.IGNORECASE,
+)
+
+
+def _validate_read_path(path: str) -> str:
+    if not isinstance(path, str) or not path or "\x00" in path:
+        raise ValueError("path is not allowed")
+    resolved = os.path.realpath(path)
+    parts = resolved.split(os.sep)
+    if "proc" in parts[:2] or any(_READ_DENIED_NAME_RE.match(p) for p in parts if p):
+        raise ValueError("path is not allowed")
+    for root in READ_ALLOWED_ROOTS:
+        if resolved == root or resolved.startswith(root + os.sep):
+            return resolved
+    raise ValueError("path is outside the allowed directories")
+
+
 @tool
 def read_file(path: str) -> str:
-    """Read the contents of a file at the given path and return them as a string.
+    """Read the contents of a file in an application-designated directory.
 
     Args:
-        path: Filesystem path to read. Relative or absolute.
+        path: Filesystem path to read. Must resolve inside an allowed directory.
 
     Returns:
         str, truncated to 50,000 characters.
     """
-    # VULN-APP-003: No path validation. The caller can supply "../../../etc/passwd"
-    # or any other path on the host filesystem. There is no chroot, no allow-list,
-    # and no check that the path stays within the intended working directory.
-    with open(path, "r") as f:
+    resolved = _validate_read_path(path)
+    with open(resolved, "r") as f:
         return _truncate_output("read_file", f.read())
 
 
