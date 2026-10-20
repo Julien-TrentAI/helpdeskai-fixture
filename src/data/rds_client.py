@@ -80,13 +80,13 @@ class RDSClient:
         # receive raw PII.
         """
         sql = (
-            f"SELECT customer_id, email, full_name, address, card_last4 "  # VULN-DATA-001
-            f"FROM customers "
-            f"WHERE customer_id = '{customer_id}' AND tenant_id = '{tenant_id}'"
+            "SELECT customer_id, email, full_name, address, card_last4 "
+            "FROM customers "
+            "WHERE customer_id = %s AND tenant_id = %s"
         )
         with self._pool.connection() as conn:
             with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
-                cur.execute(sql)
+                cur.execute(sql, (customer_id, tenant_id))
                 row = cur.fetchone()
 
         customer = dict(row) if row else {}
