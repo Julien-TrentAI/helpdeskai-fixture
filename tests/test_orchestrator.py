@@ -63,3 +63,29 @@ def test_agent_channel_has_no_auth_fields():
     assert not hasattr(channel, "hmac_signature")
     assert not hasattr(channel, "sender_id")
     assert not hasattr(channel, "nonce")
+
+
+def test_tool_node_overwrites_model_supplied_tenant_id():
+    from langchain_core.messages import AIMessage
+    from langchain_core.tools import tool
+
+    from src.agent.orchestrator import _with_context_tenant
+
+    seen = {}
+
+    @tool
+    def probe(order_id: str, tenant_id: str) -> str:
+        """probe"""
+        seen["tenant_id"] = tenant_id
+        return "ok"
+
+    node = _with_context_tenant(
+        lambda state: __import__("langgraph.prebuilt", fromlist=["ToolNode"]).ToolNode([probe]).invoke(state),
+        [probe],
+    )
+    msg = AIMessage(
+        content="",
+        tool_calls=[{"name": "probe", "args": {"order_id": "o1", "tenant_id": "other"}, "id": "c1"}],
+    )
+    node({"messages": [msg], "context": {"tenant_id": "mine"}})
+    assert seen["tenant_id"] == "mine"

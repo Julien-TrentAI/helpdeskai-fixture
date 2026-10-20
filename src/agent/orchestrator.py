@@ -28,6 +28,38 @@ class OrchestratorState(TypedDict):
     context: dict
 
 
+def _with_context_tenant(inner, tools):
+    """Wrap a tool node so tool-call tenant_id args come from the request context.
+
+    The model never chooses the tenant: any ``tenant_id`` it emitted is replaced with
+    ``state["context"]["tenant_id"]`` (taken from the verified JWT) before tools run.
+    """
+    tenant_tools = {
+        t.name for t in tools if "tenant_id" in (getattr(t, "args", None) or {})
+    }
+
+    def tenant_scoped_tool_node(state):
+        tenant_id = (state.get("context") or {}).get("tenant_id")
+        last = state["messages"][-1]
+        calls = getattr(last, "tool_calls", None) or []
+        if calls and any(c["name"] in tenant_tools for c in calls):
+            if not tenant_id:
+                raise ValueError("tenant_id missing from request context")
+            fixed = [
+                {**c, "args": {**c["args"], "tenant_id": tenant_id}}
+                if c["name"] in tenant_tools
+                else c
+                for c in calls
+            ]
+            state = {
+                **state,
+                "messages": [*state["messages"][:-1], last.model_copy(update={"tool_calls": fixed})],
+            }
+        return inner(state)
+
+    return tenant_scoped_tool_node
+
+
 def _load_system_prompt() -> str:
     """Load the orchestrator system prompt from the filesystem.
 
@@ -99,7 +131,7 @@ def create_orchestrator(model_name: str = "claude-3-5-sonnet-20241022") -> "Orch
             return "tools"
         return END
 
-    tool_node = create_validated_tool_node(ALL_TOOLS)
+    tool_node = _with_context_tenant(create_validated_tool_node(ALL_TOOLS), ALL_TOOLS)
 
     # VULN-APP-010: No max_steps / recursion_limit specified — the graph will
     # run until END is reached or until LangGraph's default recursion limit
