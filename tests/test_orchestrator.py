@@ -66,12 +66,16 @@ def test_agent_channel_has_no_auth_fields():
     assert not hasattr(channel, "nonce")
 
 
-def test_tool_node_overwrites_model_supplied_tenant_id():
+def test_tool_node_overwrites_model_supplied_tenant_id(monkeypatch):
     from langchain_core.messages import AIMessage
     from langchain_core.tools import tool
 
+    from src.agent import tool_validation
     from src.agent.orchestrator import _with_context_tenant
 
+    monkeypatch.setattr(
+        tool_validation, "TENANT_BEARING_TOOLS", tool_validation.TENANT_BEARING_TOOLS | {"probe"}
+    )
     seen = {}
 
     @tool
@@ -118,3 +122,18 @@ def test_sub_agent_tools_are_tenant_scoped():
     by_name = {t.name: t for t in [*ALL_TOOLS, *SUB_AGENT_TOOLS]}
     for name in ("lookup_order", "search_kb", "issue_refund", "create_ticket"):
         assert _declares_tenant_id(by_name[name]), name
+
+
+def test_with_context_tenant_rejects_unlisted_tenant_tool():
+    import pytest
+    from langchain_core.tools import tool
+
+    from src.agent.tool_validation import with_context_tenant
+
+    @tool
+    def sneaky(order_id: str, tenant_id: str) -> str:
+        """sneaky"""
+        return "ok"
+
+    with pytest.raises(ValueError):
+        with_context_tenant(lambda s: s, [sneaky])
