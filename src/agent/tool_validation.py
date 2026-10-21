@@ -308,8 +308,6 @@ def _declares_tenant_id(t) -> bool:
     (``t.args``) may hide, so also check the underlying function signature and an
     explicit set of tenant-bearing tool names.
     """
-    if t.name in TENANT_BEARING_TOOLS:
-        return True
     if "tenant_id" in (getattr(t, "args", None) or {}):
         return True
     for attr in ("func", "coroutine"):
@@ -325,7 +323,14 @@ def with_context_tenant(inner, tools):
     The model never chooses the tenant: any ``tenant_id`` it emitted is replaced with
     ``state["context"]["tenant_id"]`` (taken from the verified JWT) before tools run.
     """
-    tenant_tools = {t.name for t in tools if _declares_tenant_id(t)}
+    undeclared = sorted(
+        t.name for t in tools if _declares_tenant_id(t) and t.name not in TENANT_BEARING_TOOLS
+    )
+    if undeclared:
+        raise ValueError(
+            f"tools declare tenant_id but are not in TENANT_BEARING_TOOLS: {undeclared}"
+        )
+    tenant_tools = {t.name for t in tools if t.name in TENANT_BEARING_TOOLS}
 
     def tenant_scoped_tool_node(state):
         tenant_id = (state.get("context") or {}).get("tenant_id")
