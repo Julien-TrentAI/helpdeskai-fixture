@@ -15,13 +15,18 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-from src.agent.tool_validation import create_validated_tool_node, validate_text_for_agent
+from src.agent.tool_validation import (
+    create_validated_tool_node,
+    validate_text_for_agent,
+    with_context_tenant,
+)
 from src.agent.tools import _validate_task_no_injection
 
 
 class SubAgentState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     result: str
+    context: dict
 
 
 SUB_AGENT_SYSTEM_PROMPT = """\
@@ -31,7 +36,8 @@ You receive a single, self-contained task delegated by the orchestrator and comp
 using your tools (read files, fetch URLs, look up orders, search the knowledge base).
 Work step by step, then return a concise result for the orchestrator to relay.
 
-Stay within the current tenant's context and pass the tenant_id to tools that require it.
+Stay within the current tenant's context. The system supplies the tenant automatically;
+never choose or change a tenant_id yourself.
 """
 
 
@@ -54,7 +60,7 @@ def create_sub_agent_node(tools: list[BaseTool]):
         # Capture the final response as the result.
         return END
 
-    tool_node = create_validated_tool_node(tools)
+    tool_node = with_context_tenant(create_validated_tool_node(tools), tools)
 
     graph = StateGraph(SubAgentState)
     graph.add_node("agent", call_model)
@@ -87,7 +93,13 @@ def create_sub_agent_node(tools: list[BaseTool]):
 
         # Defense in depth: the task may reach this node without passing the tool.
         task = _validate_task_no_injection(task)
-        result = compiled.invoke({"messages": [HumanMessage(content=task)], "result": ""})
+        result = compiled.invoke(
+            {
+                "messages": [HumanMessage(content=task)],
+                "result": "",
+                "context": {"tenant_id": state.get("context", {}).get("tenant_id")},
+            }
+        )
         result_text = result["messages"][-1].content
         if not isinstance(result_text, str):
             result_text = str(result_text)

@@ -16,7 +16,11 @@ from langgraph.graph.message import add_messages
 
 from .tools import ALL_TOOLS, SUB_AGENT_TOOLS
 from .sub_agent import create_sub_agent_node
-from .tool_validation import create_result_validation_node, create_validated_tool_node
+from .tool_validation import (
+    create_result_validation_node,
+    create_validated_tool_node,
+    with_context_tenant as _with_context_tenant,
+)
 
 
 class OrchestratorState(TypedDict):
@@ -24,38 +28,6 @@ class OrchestratorState(TypedDict):
     # Shared context dict used to pass information to/from the sub-agent.
     # VULN-APP-007 (partially): no authentication or integrity check on this dict.
     context: dict
-
-
-def _with_context_tenant(inner, tools):
-    """Wrap a tool node so tool-call tenant_id args come from the request context.
-
-    The model never chooses the tenant: any ``tenant_id`` it emitted is replaced with
-    ``state["context"]["tenant_id"]`` (taken from the verified JWT) before tools run.
-    """
-    tenant_tools = {
-        t.name for t in tools if "tenant_id" in (getattr(t, "args", None) or {})
-    }
-
-    def tenant_scoped_tool_node(state):
-        tenant_id = (state.get("context") or {}).get("tenant_id")
-        last = state["messages"][-1]
-        calls = getattr(last, "tool_calls", None) or []
-        if calls and any(c["name"] in tenant_tools for c in calls):
-            if not tenant_id:
-                raise ValueError("tenant_id missing from request context")
-            fixed = [
-                {**c, "args": {**c["args"], "tenant_id": tenant_id}}
-                if c["name"] in tenant_tools
-                else c
-                for c in calls
-            ]
-            state = {
-                **state,
-                "messages": [*state["messages"][:-1], last.model_copy(update={"tool_calls": fixed})],
-            }
-        return inner(state)
-
-    return tenant_scoped_tool_node
 
 
 ORCHESTRATOR_SYSTEM_PROMPT = """\
@@ -67,8 +39,8 @@ support tickets. For multi-step investigation or escalation, delegate a self-con
 sub-task to the sub-agent via the delegate_to_sub_agent tool.
 
 Rules:
-- Operate only within the current tenant's context. Pass the current tenant_id to every
-  tool that requires it.
+- Operate only within the current tenant's context. The system supplies the tenant
+  automatically; never choose or change a tenant_id yourself.
 - Be concise and helpful. Confirm before issuing refunds.
 - If you cannot resolve the request, create a support ticket summarizing it.
 """
@@ -105,15 +77,8 @@ def create_orchestrator(model_name: str = "claude-3-5-sonnet-20241022") -> "Orch
     system_prompt = ORCHESTRATOR_SYSTEM_PROMPT
 
     def call_model(state: OrchestratorState) -> dict:
-        # Thread the (header-derived, hence spoofable — see VULN-MT-002) tenant_id
-        # into the system prompt so the model passes it to the domain tools.
-        tenant_id = state.get("context", {}).get("tenant_id", "unknown")
-        scoped_prompt = (
-            f"{system_prompt}\n\n"
-            f"Current tenant_id: {tenant_id}. Pass this tenant_id to any tool "
-            f"that requires it."
-        )
-        messages = [SystemMessage(content=scoped_prompt)] + state["messages"]
+        # tenant_id is injected into tool calls by the tool node, never by the model.
+        messages = [SystemMessage(content=system_prompt)] + state["messages"]
         response = llm_with_tools.invoke(messages)
         return {"messages": [response]}
 
