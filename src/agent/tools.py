@@ -270,23 +270,34 @@ def _resolve_public_addresses(host: str, port: int) -> list:
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
-    """Connects to the address that was just validated, not a second DNS answer.
+    """Connects to an address that was validated, never to a fresh DNS answer.
 
-    TLS still verifies the certificate against the original hostname.
+    `pinned` maps host -> addresses validated by `_validate_fetch_url`; a host with
+    no pin is validated here, immediately before connecting. TLS still verifies the
+    certificate against the original hostname.
     """
 
+    pinned: dict = {}
+
     def connect(self):
-        addrs = _resolve_public_addresses(self.host, self.port)
+        host = self.host.lower().rstrip(".")
+        addrs = self.pinned.get(host) or _resolve_public_addresses(self.host, self.port)
         sock = socket.create_connection((addrs[0], self.port), self.timeout, self.source_address)
         self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
 
 
 class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, pinned: dict):
+        super().__init__()
+        self._pinned = pinned
+
     def https_open(self, req):
-        return self.do_open(_PinnedHTTPSConnection, req, context=ssl.create_default_context())
+        conn_cls = type("_Conn", (_PinnedHTTPSConnection,), {"pinned": self._pinned})
+        return self.do_open(conn_cls, req, context=ssl.create_default_context())
 
 
-def _validate_fetch_url(url: str) -> str:
+def _validate_fetch_url(url: str, pinned: Optional[dict] = None) -> str:
+    """Validate url; record the validated addresses in `pinned` for the connection."""
     if not isinstance(url, str):
         raise ValueError("url must be a string")
     parsed = urllib.parse.urlsplit(url)
@@ -297,15 +308,21 @@ def _validate_fetch_url(url: str) -> str:
     host = (parsed.hostname or "").lower().rstrip(".")
     if not host or host not in _allowed_fetch_hosts():
         raise ValueError("url host is not in the approved allowlist")
-    _resolve_public_addresses(host, parsed.port or 443)
+    addrs = _resolve_public_addresses(host, parsed.port or 443)
+    if pinned is not None:
+        pinned[host] = addrs
     return url
 
 
 class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
     max_redirections = MAX_FETCH_REDIRECTS
 
+    def __init__(self, pinned: Optional[dict] = None):
+        super().__init__()
+        self._pinned = pinned
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        _validate_fetch_url(urllib.parse.urljoin(req.full_url, newurl))
+        _validate_fetch_url(urllib.parse.urljoin(req.full_url, newurl), self._pinned)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -319,8 +336,11 @@ def fetch_url(url: str) -> str:
     Returns:
         str, truncated to 50,000 characters.
     """
-    _validate_fetch_url(url)
-    opener = urllib.request.build_opener(_ValidatingRedirectHandler, _PinnedHTTPSHandler)
+    pinned: dict = {}
+    _validate_fetch_url(url, pinned)
+    opener = urllib.request.build_opener(
+        _ValidatingRedirectHandler(pinned), _PinnedHTTPSHandler(pinned)
+    )
     with opener.open(url, timeout=10) as response:
         return _truncate_output(
             "fetch_url", response.read().decode("utf-8", errors="replace")
