@@ -18,7 +18,7 @@ from psycopg_pool import ConnectionPool
 
 logger = logging.getLogger(__name__)
 
-_SECRET_ID = os.environ.get("RDS_SECRET_ID", "helpdeskai/rds/orders-credentials")
+_SECRET_ID = os.environ.get("RDS_SECRET_ID")
 
 # Module-level connection pool — shared across all requests in the process.
 _pool: ConnectionPool | None = None
@@ -26,6 +26,8 @@ _pool: ConnectionPool | None = None
 
 def _build_dsn() -> str:
     """Build the DSN from the Secrets Manager credentials (rotated automatically)."""
+    if not _SECRET_ID:
+        raise RuntimeError("RDS_SECRET_ID is not set; refusing to build a DSN without a managed secret")
     client = boto3.client("secretsmanager")
     secret = json.loads(client.get_secret_value(SecretId=_SECRET_ID)["SecretString"])
     return make_conninfo(
