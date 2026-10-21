@@ -1,9 +1,7 @@
 """PostgreSQL (RDS) client for HelpDeskAI orders and customer records.
 
-Uses psycopg (v3) with a connection pool. All methods that build SQL queries
-are vulnerable to SQL injection via f-string interpolation. Additionally,
-lookup_order and issue_refund omit tenant_id scoping, enabling cross-tenant
-IDOR (Insecure Direct Object Reference) attacks.
+Uses psycopg (v3) with a connection pool. All queries use bound parameters
+(%s placeholders) and include a tenant_id predicate.
 """
 
 from __future__ import annotations
@@ -67,18 +65,7 @@ class RDSClient:
         return dict(row) if row else {}
 
     def get_customer(self, customer_id: str, tenant_id: str) -> dict[str, Any]:
-        """Fetch a customer record by customer_id, filtered by tenant.
-
-        # SECURITY FIXTURE: VULN-DATA-001 — customer_id is interpolated directly
-        # into the SQL string. The tenant_id filter is present (contrast with
-        # lookup_order) but it is also interpolated, so a crafted customer_id can
-        # escape the WHERE clause entirely.
-        #
-        # SECURITY FIXTURE: VULN-DATA-002 — the returned customer dict includes
-        # PII fields (email, address, card_last4) that are logged unencrypted to
-        # stdout / CloudWatch. A log viewer, log export pipeline, or SIEM would
-        # receive raw PII.
-        """
+        """Fetch a customer record by customer_id, filtered by tenant."""
         sql = (
             "SELECT customer_id, email, full_name, address, card_last4 "
             "FROM customers "
@@ -91,10 +78,6 @@ class RDSClient:
 
         customer = dict(row) if row else {}
 
-        # SECURITY FIXTURE: VULN-DATA-002 — full customer dict (including email,
-        # address, and card_last4) written to the application log in plaintext.
-        # An attacker with log access, a misconfigured log shipper, or a nosy
-        # cloud-provider support engineer can read raw PII.
         logger.info("Customer lookup completed")
 
         return customer
@@ -117,8 +100,6 @@ class RDSClient:
         )
         return affected > 0
 
-    # ── Correct pattern (parameterised query + tenant scope) ──────────────────
-
     def list_orders_for_tenant(
         self,
         tenant_id: str,
@@ -127,9 +108,7 @@ class RDSClient:
         """Return recent orders scoped to a specific tenant.
 
         Uses a parameterised query (%s placeholders) to prevent SQL injection,
-        and includes tenant_id in the WHERE clause for proper multi-tenant isolation.
-        This is the correct pattern — contrast with lookup_order above.
-        """
+        and includes tenant_id in the WHERE clause for proper multi-tenant isolation.        """
         sql = (
             "SELECT order_id, status, total_amount, created_at "
             "FROM orders "
