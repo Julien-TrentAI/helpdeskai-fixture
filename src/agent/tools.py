@@ -28,7 +28,8 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Annotated
+from enum import Enum
+from typing import Annotated, Optional
 
 from langchain_core.tools import InjectedToolArg, tool
 
@@ -106,11 +107,40 @@ MAX_TASK_LENGTH = 2_000
 
 
 def _validate_task_no_injection(task: str) -> str:
+    """Secondary check only: a keyword denylist is not the security boundary.
+
+    The boundary is the structured task contract below plus the untrusted-data
+    framing applied to the question when the sub-agent message is built.
+    """
     if not isinstance(task, str) or len(task) > MAX_TASK_LENGTH:
         raise ValueError(f"task must be a string of at most {MAX_TASK_LENGTH} characters")
     if _TASK_INJECTION_RE.search(task):
         raise ValueError("task contains disallowed instruction-override patterns")
     return task
+
+
+class TaskType(str, Enum):
+    ORDER_INVESTIGATION = "order_investigation"
+    KB_RESEARCH = "kb_research"
+    ESCALATION_SUMMARY = "escalation_summary"
+
+
+def validate_delegated_task(task_type: str, order_id: Optional[str], question: str) -> dict:
+    """Validate the structured sub-agent task contract and return normalized fields."""
+    try:
+        validated_type = TaskType(task_type)
+    except ValueError:
+        allowed = ", ".join(t.value for t in TaskType)
+        raise ValueError(f"task_type must be one of: {allowed}")
+    if order_id in (None, ""):
+        if validated_type is TaskType.ORDER_INVESTIGATION:
+            raise ValueError("order_id is required for order_investigation")
+        order_id = None
+    else:
+        order_id = _validate_id(order_id, "order_id")
+    question = _validate_text(question, "question", MAX_TASK_LENGTH)
+    _validate_task_no_injection(question)
+    return {"task_type": validated_type.value, "order_id": order_id, "question": question}
 
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -383,22 +413,25 @@ def create_ticket(subject: str, body: str, customer_email: str, tenant_id: Annot
 
 
 @tool
-def delegate_to_sub_agent(task: str) -> str:
+def delegate_to_sub_agent(task_type: str, question: str, order_id: Optional[str] = None) -> str:
     """Delegate a focused, self-contained sub-task to the task-executor sub-agent.
 
     Use this for multi-step research or escalation work that should run as its own
-    ReAct loop (e.g. "investigate why order X keeps failing and summarize").
+    ReAct loop (e.g. investigate why an order keeps failing and summarize).
 
     Args:
-        task: A self-contained description of the sub-task to execute.
+        task_type: One of "order_investigation", "kb_research", "escalation_summary".
+        question: The question to answer, as plain text (treated as untrusted data).
+        order_id: The order identifier; required for order_investigation.
 
     Returns:
         str, a placeholder; the sub-agent node supplies the real result.
     """
-    task = _validate_task_no_injection(task)
+    validate_delegated_task(task_type, order_id, question)
     # Routing signal: the orchestrator graph routes to the `sub_agent` node when it
-    # sees this tool call and runs the sub-agent with `task`. The return value here is
-    # a placeholder — the sub-agent node produces the real result and answers this call.
+    # sees this tool call and runs the sub-agent with the validated fields. The return
+    # value here is a placeholder — the sub-agent node produces the real result and
+    # answers this call.
     return "delegated"
 
 
