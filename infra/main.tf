@@ -45,32 +45,36 @@ provider "aws" {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Knowledge-base bucket — INSECURE (VULN-DATA-003)
+# Knowledge-base bucket — private, SSE-KMS
 # ─────────────────────────────────────────────────────────────────────────────
 
 resource "aws_s3_bucket" "kb_docs" {
   bucket = "helpdeskai-kb-docs"
 }
 
-# SECURITY FIXTURE: VULN-DATA-003 — public-read ACL on the KB bucket. Any anonymous
-# internet user can list and download every tenant's knowledge-base documents.
-resource "aws_s3_bucket_acl" "kb_docs" {
-  bucket = aws_s3_bucket.kb_docs.id
-  acl    = "public-read" # VULN-DATA-003
+resource "aws_kms_key" "kb_docs" {
+  description             = "CMK for HelpDeskAI knowledge-base documents"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
 }
 
-# SECURITY FIXTURE: VULN-DATA-003 — public access block explicitly DISABLED, so the
-# public-read ACL above takes effect (no account/bucket guard rail).
 resource "aws_s3_bucket_public_access_block" "kb_docs" {
   bucket                  = aws_s3_bucket.kb_docs.id
-  block_public_acls       = false # VULN-DATA-003
-  block_public_policy     = false # VULN-DATA-003
-  ignore_public_acls      = false # VULN-DATA-003
-  restrict_public_buckets = false # VULN-DATA-003
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
-# NOTE the ABSENCE of an aws_s3_bucket_server_side_encryption_configuration for
-# kb_docs — VULN-DATA-003: KB documents are stored unencrypted at rest.
+resource "aws_s3_bucket_server_side_encryption_configuration" "kb_docs" {
+  bucket = aws_s3_bucket.kb_docs.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.kb_docs.arn
+    }
+  }
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Attachments bucket — SECURE (CTRL-CLOUD-001)
@@ -274,7 +278,7 @@ resource "aws_iam_role_policy" "app" {
       {
         Effect   = "Allow"
         Action   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
-        Resource = [aws_kms_key.attachments.arn]
+        Resource = [aws_kms_key.attachments.arn, aws_kms_key.kb_docs.arn]
       },
       {
         # Read-only access to the RDS credentials secret (and its CMK).
