@@ -51,6 +51,13 @@ def _get_pool() -> ConnectionPool:
     return _pool
 
 
+def _require_tenant(tenant_id: Any) -> str:
+    """Fail closed: every query needs a non-empty tenant_id."""
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
+        raise ValueError("tenant_id is required")
+    return tenant_id
+
+
 class RDSClient:
     """Thin psycopg-based client for the HelpDeskAI orders database."""
 
@@ -59,6 +66,7 @@ class RDSClient:
 
     def lookup_order(self, order_id: str, tenant_id: str) -> dict[str, Any]:
         """Fetch an order by its ID, scoped to the given tenant."""
+        tenant_id = _require_tenant(tenant_id)
         sql = "SELECT * FROM orders WHERE order_id = %s AND tenant_id = %s"
         with self._pool.connection() as conn:
             with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
@@ -68,6 +76,7 @@ class RDSClient:
 
     def get_customer(self, customer_id: str, tenant_id: str) -> dict[str, Any]:
         """Fetch a customer record by customer_id, filtered by tenant."""
+        tenant_id = _require_tenant(tenant_id)
         sql = (
             "SELECT customer_id, email, full_name, address, card_last4 "
             "FROM customers "
@@ -86,6 +95,7 @@ class RDSClient:
 
     def issue_refund(self, order_id: str, amount: float, tenant_id: str) -> bool:
         """Apply a refund to an order record, scoped to the given tenant."""
+        tenant_id = _require_tenant(tenant_id)
         sql = (
             "UPDATE orders SET refund_amount = %s, status = 'refunded' "
             "WHERE order_id = %s AND tenant_id = %s"
@@ -111,6 +121,7 @@ class RDSClient:
 
         Uses a parameterised query (%s placeholders) to prevent SQL injection,
         and includes tenant_id in the WHERE clause for proper multi-tenant isolation.        """
+        tenant_id = _require_tenant(tenant_id)
         sql = (
             "SELECT order_id, status, total_amount, created_at "
             "FROM orders "
