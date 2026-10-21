@@ -5,7 +5,7 @@ SECURITY FIXTURE — Contains deliberately insecure patterns for Trent validatio
 
 Planted findings:
   VULN-APP-004: (fixed) execute_code now runs in a sandboxed child process
-  VULN-APP-005: query_database — SQL injection via f-string interpolation
+  VULN-APP-005: (fixed) query_database binds filter_value and allowlists table/column names
   VULN-APP-006: (fixed) tools require a bearer token and per-caller authorization
 
 Server name: fixture-mcp
@@ -143,6 +143,21 @@ def execute_code(code: str) -> str:
     return result if sep else "Code executed (no 'result' variable set)"
 
 
+# Tables and columns query_database may touch. Identifiers cannot be bound as
+# parameters, so anything outside this allowlist is rejected.
+_QUERYABLE_TABLES = {
+    "users": {"id", "name"},
+}
+
+
+def _validate_query_target(table: str, column: str) -> None:
+    """Reject any table or column that is not in the allowlist."""
+    if table not in _QUERYABLE_TABLES:
+        raise ValueError(f"table '{table}' is not allowed")
+    if column not in _QUERYABLE_TABLES[table]:
+        raise ValueError(f"column '{column}' is not allowed for table '{table}'")
+
+
 @mcp.tool()
 @require_auth
 def query_database(table: str, filter_column: str, filter_value: str) -> list[dict]:
@@ -156,16 +171,16 @@ def query_database(table: str, filter_column: str, filter_value: str) -> list[di
     Returns:
         List of matching rows as dicts.
     """
+    _validate_query_target(table, filter_column)
+
     conn = sqlite3.connect("data.db")
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
-    # VULN-APP-005: SQL query built by f-string interpolation. An attacker can
-    # supply filter_value="' OR '1'='1" to dump the entire table, or a more
-    # sophisticated payload to exfiltrate other tables or call sqlite functions.
-    # Correct pattern: parameterized query with cursor.execute(sql, (value,)).
-    sql = f"SELECT * FROM {table} WHERE {filter_column} = '{filter_value}'"  # noqa: S608
-    cursor.execute(sql)
+    # table and filter_column cannot be bound, so they are allowlisted above;
+    # filter_value is bound as a parameter.
+    sql = f"SELECT * FROM {table} WHERE {filter_column} = ?"  # noqa: S608
+    cursor.execute(sql, (filter_value,))
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return rows
