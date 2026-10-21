@@ -26,7 +26,9 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
-from langchain_core.tools import tool
+from typing import Annotated
+
+from langchain_core.tools import InjectedToolArg, tool
 
 from src.agent.tool_validation import MAX_TOOL_OUTPUT_LENGTH
 from src.data.rds_client import RDSClient
@@ -266,7 +268,7 @@ def fetch_url(url: str) -> str:
 # ── HelpDeskAI domain tools (operate on tenant data) ─────────────────────────
 
 @tool
-def lookup_order(order_id: str, tenant_id: str) -> dict:
+def lookup_order(order_id: str, tenant_id: Annotated[str, InjectedToolArg]) -> dict:
     """Look up a customer order by its ID for the current tenant.
 
     Args:
@@ -288,7 +290,7 @@ def lookup_order(order_id: str, tenant_id: str) -> dict:
 
 
 @tool
-def issue_refund(order_id: str, amount: float, tenant_id: str) -> bool:
+def issue_refund(order_id: str, amount: float, tenant_id: Annotated[str, InjectedToolArg]) -> bool:
     """Issue a refund of `amount` against `order_id` for the current tenant.
 
     Args:
@@ -308,7 +310,7 @@ def issue_refund(order_id: str, amount: float, tenant_id: str) -> bool:
 
 
 @tool
-def search_kb(query_prefix: str, tenant_id: str) -> list:
+def search_kb(query_prefix: str, tenant_id: Annotated[str, InjectedToolArg]) -> list:
     """Search the tenant knowledge base for documents matching a prefix.
 
     Args:
@@ -326,7 +328,7 @@ def search_kb(query_prefix: str, tenant_id: str) -> list:
 
 
 @tool
-def create_ticket(subject: str, body: str, customer_email: str, tenant_id: str) -> dict:
+def create_ticket(subject: str, body: str, customer_email: str, tenant_id: Annotated[str, InjectedToolArg]) -> dict:
     """Create a support ticket for the current tenant.
 
     Args:
