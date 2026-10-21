@@ -27,7 +27,7 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
-from src.mcp_server.auth import BearerAuthMiddleware, require_auth
+from src.mcp_server.auth import BearerAuthMiddleware, bind_stdio_caller, require_auth
 
 # Every tool is wrapped with @require_auth: callers must present a bearer token
 # (see auth.py) and be authorized for the specific tool (VULN-APP-006 fixed).
@@ -197,4 +197,5 @@ if __name__ == "__main__":
 
         uvicorn.run(build_sse_app(), host="127.0.0.1", port=int(os.environ.get("MCP_PORT", "8000")))
     else:
+        bind_stdio_caller()
         mcp.run()
