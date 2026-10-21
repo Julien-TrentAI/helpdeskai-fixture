@@ -254,19 +254,6 @@ resource "aws_iam_role" "app" {
         Effect    = "Allow"
         Principal = { Service = "ecs-tasks.amazonaws.com" }
       },
-      {
-        # Self-assume so per-request, tenant-scoped session credentials can be
-        # minted from this role. The account-root principal plus the PrincipalArn
-        # condition limits this to the role itself and avoids a self-reference cycle.
-        Action    = "sts:AssumeRole"
-        Effect    = "Allow"
-        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
-        Condition = {
-          ArnEquals = {
-            "aws:PrincipalArn" = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/helpdeskai-app-role"
-          }
-        }
-      },
     ]
   })
 }
@@ -282,35 +269,31 @@ resource "aws_iam_role_policy" "app" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = ["s3:GetObject", "s3:PutObject"]
-        Resource = [
-          "${aws_s3_bucket.kb_docs.arn}/*",
-          "${aws_s3_bucket.attachments.arn}/*",
-        ]
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject"]
+        Resource = ["${aws_s3_bucket.attachments.arn}/*"]
       },
       {
-        Effect = "Allow"
-        Action = ["s3:ListBucket"]
-        Resource = [
-          aws_s3_bucket.kb_docs.arn,
-          aws_s3_bucket.attachments.arn,
-        ]
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [aws_s3_bucket.attachments.arn]
       },
       {
-        # Lets the role mint tenant-scoped sessions of itself.
+        # Lets the app mint tenant-scoped KB sessions of the dedicated session role only.
         Effect   = "Allow"
         Action   = ["sts:AssumeRole"]
-        Resource = [aws_iam_role.app.arn]
+        Resource = [aws_iam_role.kb_session.arn]
       },
       {
-        # Query-only access keyed on tenant_id; no Scan.
         Effect = "Allow"
         Action = ["dynamodb:Query", "dynamodb:GetItem", "dynamodb:PutItem"]
-        Resource = [
-          aws_dynamodb_table.tickets.arn,
-          "arn:aws:dynamodb:us-east-1:${data.aws_caller_identity.current.account_id}:table/helpdeskAI-tenant-config",
-        ]
+        Resource = [aws_dynamodb_table.tickets.arn]
+      },
+      {
+        # get_tenant_config() reads a single item by primary key.
+        Effect   = "Allow"
+        Action   = ["dynamodb:GetItem"]
+        Resource = ["arn:aws:dynamodb:us-east-1:${data.aws_caller_identity.current.account_id}:table/helpdeskAI-tenant-config"]
       },
       {
         Effect   = "Allow"
@@ -330,4 +313,50 @@ resource "aws_iam_role_policy" "app" {
       },
     ]
   })
+}
+
+# Role assumed per request with a tenant session policy; the session policy
+# narrows these grants to the tenant's KB prefix.
+resource "aws_iam_role" "kb_session" {
+  name = "helpdeskai-kb-session-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.app.arn }
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "kb_session" {
+  name = "helpdeskai-kb-session-policy"
+  role = aws_iam_role.kb_session.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject"]
+        Resource = ["${aws_s3_bucket.kb_docs.arn}/*"]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [aws_s3_bucket.kb_docs.arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = [aws_kms_key.kb_docs.arn]
+      },
+    ]
+  })
+}
+
+output "kb_session_role_arn" {
+  description = "Set as KB_SESSION_ROLE_ARN for the application"
+  value       = aws_iam_role.kb_session.arn
 }

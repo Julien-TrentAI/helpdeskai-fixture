@@ -38,14 +38,14 @@ class S3Client:
     def _tenant_kb_client(self, tenant_id: str) -> Any:
         """Build an S3 client whose credentials can only reach the tenant's KB prefix.
 
-        Assumes the application role with an inline session policy, so storage
+        Assumes the KB session role with an inline session policy, so storage
         refuses out-of-tenant keys even if a path traversal reaches it.
         """
         if not tenant_id or "/" in tenant_id or "*" in tenant_id or "?" in tenant_id:
             raise PermissionError("Invalid tenant scope")
-        role_arn = os.environ.get("APP_ROLE_ARN")
+        role_arn = os.environ.get("KB_SESSION_ROLE_ARN")
         if not role_arn:
-            raise RuntimeError("APP_ROLE_ARN is not configured")
+            raise RuntimeError("KB_SESSION_ROLE_ARN is not configured")
 
         bucket_arn = f"arn:aws:s3:::{_KB_BUCKET}"
         session_policy = {
