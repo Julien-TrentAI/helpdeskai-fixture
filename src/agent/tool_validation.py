@@ -292,3 +292,35 @@ def create_result_validation_node() -> Callable[[Any], dict]:
         return out
 
     return validate_results
+
+
+def with_context_tenant(inner, tools):
+    """Wrap a tool node so tool-call tenant_id args come from the request context.
+
+    The model never chooses the tenant: any ``tenant_id`` it emitted is replaced with
+    ``state["context"]["tenant_id"]`` (taken from the verified JWT) before tools run.
+    """
+    tenant_tools = {
+        t.name for t in tools if "tenant_id" in (getattr(t, "args", None) or {})
+    }
+
+    def tenant_scoped_tool_node(state):
+        tenant_id = (state.get("context") or {}).get("tenant_id")
+        last = state["messages"][-1]
+        calls = getattr(last, "tool_calls", None) or []
+        if calls and any(c["name"] in tenant_tools for c in calls):
+            if not tenant_id:
+                raise ValueError("tenant_id missing from request context")
+            fixed = [
+                {**c, "args": {**c["args"], "tenant_id": tenant_id}}
+                if c["name"] in tenant_tools
+                else c
+                for c in calls
+            ]
+            state = {
+                **state,
+                "messages": [*state["messages"][:-1], last.model_copy(update={"tool_calls": fixed})],
+            }
+        return inner(state)
+
+    return tenant_scoped_tool_node
