@@ -148,6 +148,10 @@ def _validate_message(msg: ToolMessage) -> ToolMessage:
             name=name,
             status="error",
         )
+    if name == "lookup_order" and isinstance(raw, dict) and raw:
+        # Only allowlisted fields may reach the model; the schema check above ran on the full row.
+        projected = {k: raw[k] for k in ORDER_FIELD_ALLOWLIST if k in raw}
+        return msg.model_copy(update={"content": json.dumps(projected, default=str)})
     return msg
 
 
