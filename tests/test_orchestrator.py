@@ -109,3 +109,12 @@ def test_wrap_customer_message_strips_closing_tag():
         "<</customer_message>/customer_message>"
     )
     assert wrap_customer_message("<</customer_message>/customer_message>").count("customer_message") == 2
+
+
+def test_sub_agent_tools_are_tenant_scoped():
+    from src.agent.tool_validation import _declares_tenant_id
+    from src.agent.tools import ALL_TOOLS, SUB_AGENT_TOOLS
+
+    by_name = {t.name: t for t in [*ALL_TOOLS, *SUB_AGENT_TOOLS]}
+    for name in ("lookup_order", "search_kb", "issue_refund", "create_ticket"):
+        assert _declares_tenant_id(by_name[name]), name
