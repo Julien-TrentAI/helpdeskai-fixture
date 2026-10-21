@@ -22,30 +22,41 @@ def _mcp_caller(monkeypatch):
     callers = {hashlib.sha256(_TOKEN.encode()).hexdigest():
                {"caller": "tests", "tools": ["execute_code", "query_database"]}}
     monkeypatch.setenv("MCP_CALLERS", json.dumps(callers))
-    monkeypatch.setenv("MCP_AUTH_TOKEN", _TOKEN)
+    from src.mcp_server import auth
+    monkeypatch.setattr(auth, "_stdio_caller", callers[hashlib.sha256(_TOKEN.encode()).hexdigest()])
 
 
 def test_tools_reject_missing_or_unknown_token(monkeypatch):
     from src.mcp_server.server import execute_code
-    monkeypatch.delenv("MCP_AUTH_TOKEN")
+    from src.mcp_server import auth
+    monkeypatch.setattr(auth, "_stdio_caller", None)
+    monkeypatch.setenv("MCP_AUTH_TOKEN", _TOKEN)
     with pytest.raises(PermissionError):
         execute_code(code="result = 1")
     monkeypatch.setenv("MCP_AUTH_TOKEN", "wrong")
     with pytest.raises(PermissionError):
-        execute_code(code="result = 1")
+        auth.bind_stdio_caller()
 
 
 def test_tools_reject_unauthorized_tool(monkeypatch):
     from src.mcp_server.server import execute_code
     callers = {hashlib.sha256(_TOKEN.encode()).hexdigest(): {"caller": "x", "tools": ["query_database"]}}
     monkeypatch.setenv("MCP_CALLERS", json.dumps(callers))
+    monkeypatch.setenv("MCP_AUTH_TOKEN", _TOKEN)
+    from src.mcp_server import auth
+    auth.bind_stdio_caller()
     with pytest.raises(PermissionError):
         execute_code(code="result = 1")
 
 
 def test_tools_fail_closed_without_config(monkeypatch):
+    from src.mcp_server import auth
     from src.mcp_server.server import execute_code
     monkeypatch.delenv("MCP_CALLERS")
+    monkeypatch.setenv("MCP_AUTH_TOKEN", _TOKEN)
+    with pytest.raises(PermissionError):
+        auth.bind_stdio_caller()
+    monkeypatch.setattr(auth, "_stdio_caller", None)
     with pytest.raises(PermissionError):
         execute_code(code="result = 1")
 

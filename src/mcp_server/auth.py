@@ -6,8 +6,9 @@ of each caller's bearer token to its name and the tools it may invoke:
     {"<sha256 of token>": {"caller": "orchestrator", "tools": ["query_database"]}}
 
 The raw token comes from the HTTP ``Authorization: Bearer`` header on network
-transports, or from MCP_AUTH_TOKEN in the process environment on stdio.
-Everything fails closed: no config, no token, an unknown token or a tool outside
+transports. On stdio, MCP_AUTH_TOKEN is resolved once at startup by
+``bind_stdio_caller()`` and never re-read per tool call.
+Everything fails closed: no config, no bound caller, an unknown token or a tool outside
 the caller's allowlist is rejected.
 """
 
@@ -24,9 +25,8 @@ _DENIED = "Authentication failed."
 # Caller record resolved by BearerAuthMiddleware for the request being served.
 _current_caller: ContextVar[dict | None] = ContextVar("mcp_current_caller", default=None)
 
-
-def _is_sse() -> bool:
-    return os.environ.get("MCP_TRANSPORT", "") == "sse"
+# Caller resolved once at startup for the stdio transport (no request context there).
+_stdio_caller: dict | None = None
 
 
 def _load_callers() -> dict[str, dict]:
@@ -52,9 +52,7 @@ def _request_token() -> str:
             return header[7:].strip()
     except Exception:
         pass
-    if _is_sse():
-        return ""
-    return os.environ.get("MCP_AUTH_TOKEN", "")
+    return ""
 
 
 def authenticate(token: str) -> dict:
@@ -70,16 +68,19 @@ def authenticate(token: str) -> dict:
 
 def authorize(token: str, tool_name: str) -> str:
     """Authenticate the caller and check it may use tool_name; return caller name."""
-    if _is_sse():
-        caller = _current_caller.get()
-        if caller is None:
-            raise PermissionError(_DENIED)
-    else:
-        caller = authenticate(token)
+    caller = _current_caller.get() or _stdio_caller
+    if caller is None:
+        raise PermissionError(_DENIED)
     allowed = caller.get("tools", [])
     if not isinstance(allowed, list) or tool_name not in allowed:
         raise PermissionError(_DENIED)
     return str(caller.get("caller", "unknown"))
+
+
+def bind_stdio_caller() -> None:
+    """Resolve MCP_AUTH_TOKEN once through authenticate() and hold the caller."""
+    global _stdio_caller
+    _stdio_caller = authenticate(os.environ.get("MCP_AUTH_TOKEN", ""))
 
 
 def require_auth(tool_func: Callable) -> Callable:
@@ -87,8 +88,6 @@ def require_auth(tool_func: Callable) -> Callable:
 
     @wraps(tool_func)
     def wrapper(*args, **kwargs):
-        if _is_sse() and _current_caller.get() is None:
-            raise PermissionError(_DENIED)
         authorize(_request_token(), tool_func.__name__)
         return tool_func(*args, **kwargs)
 
