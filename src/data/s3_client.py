@@ -1,7 +1,7 @@
 """S3 client for HelpDeskAI knowledge base documents and customer attachments.
 
 Two logical buckets:
-  {tenant_id}-kb-docs        — per-tenant KB documents (insecure: public ACL, no SSE)
+  helpdeskai-kb-docs         — shared KB documents under {tenant_id}/ (private, SSE-KMS)
   helpdeskAI-attachments     — shared attachments bucket (secure: SSE-KMS, no public access)
 
 The KB bucket is managed by Terraform (see infra/main.tf — VULN-DATA-003).
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 _AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 _ATTACHMENTS_BUCKET = os.environ.get("ATTACHMENTS_BUCKET", "helpdeskAI-attachments")
+_KB_BUCKET = os.environ.get("KB_BUCKET", "helpdeskai-kb-docs")
 _PRESIGNED_URL_EXPIRY = 604800  # 7 days — VULN-DATA-004
 
 
@@ -48,7 +49,7 @@ class S3Client:
         ):
             raise PermissionError("document_prefix is outside the authenticated tenant's scope")
 
-        kb_bucket = f"{tenant_id}-kb-docs"
+        kb_bucket = _KB_BUCKET
         tenant_prefix = f"{tenant_id}/"
         scoped_prefix = f"{tenant_prefix}{document_prefix}"
 
@@ -80,7 +81,7 @@ class S3Client:
         The key is prefixed with tenant_id so documents are stored under the
         tenant's own path (correct pattern for write operations).
         """
-        kb_bucket = f"{tenant_id}-kb-docs"
+        kb_bucket = _KB_BUCKET
         scoped_key = f"{tenant_id}/{document_key}"  # tenant-scoped prefix
         self._s3.put_object(Bucket=kb_bucket, Key=scoped_key, Body=content)
         logger.info(
@@ -118,7 +119,7 @@ class S3Client:
         url = self._s3.generate_presigned_url(
             "get_object",
             Params={
-                "Bucket": "helpdeskAI-kb-docs",  # shared bucket — no tenant isolation
+                "Bucket": _KB_BUCKET,  # shared bucket; tenant isolation via key prefix
                 "Key": document_key,             # VULN-DATA-004
             },
             ExpiresIn=_PRESIGNED_URL_EXPIRY,    # VULN-DATA-004: 7 days
