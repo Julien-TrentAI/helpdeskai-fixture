@@ -63,3 +63,27 @@ def test_connection_rejects_rebound_private_address(monkeypatch):
     monkeypatch.setattr(tools.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", ("169.254.169.254", 443))])
     with pytest.raises(ValueError):
         tools._PinnedHTTPSConnection("example.com", 443).connect()
+
+
+def test_validation_records_pinned_addresses(monkeypatch):
+    monkeypatch.setattr(tools.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", ("93.184.216.34", 443))])
+    pinned = {}
+    tools._validate_fetch_url("https://example.com/x", pinned)
+    assert pinned == {"example.com": ["93.184.216.34"]}
+
+
+def test_connection_uses_pinned_over_new_dns(monkeypatch):
+    monkeypatch.setattr(tools.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", ("169.254.169.254", 443))])
+    seen = {}
+
+    class _Ctx(ssl.SSLContext):
+        def wrap_socket(self, sock, server_hostname=None, **kw):
+            return sock
+
+    monkeypatch.setattr(
+        tools.socket, "create_connection",
+        lambda addr, *a, **k: seen.setdefault("addr", addr) and object(),
+    )
+    cls = type("C", (tools._PinnedHTTPSConnection,), {"pinned": {"example.com": ["93.184.216.34"]}})
+    cls("example.com", 443, context=_Ctx(ssl.PROTOCOL_TLS_CLIENT)).connect()
+    assert seen["addr"] == ("93.184.216.34", 443)
