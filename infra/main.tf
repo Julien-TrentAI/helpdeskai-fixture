@@ -248,11 +248,26 @@ resource "aws_iam_role" "app" {
   name = "helpdeskai-app-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "ecs-tasks.amazonaws.com" }
-    }]
+    Statement = [
+      {
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
+        Principal = { Service = "ecs-tasks.amazonaws.com" }
+      },
+      {
+        # Self-assume so per-request, tenant-scoped session credentials can be
+        # minted from this role. The account-root principal plus the PrincipalArn
+        # condition limits this to the role itself and avoids a self-reference cycle.
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Condition = {
+          ArnEquals = {
+            "aws:PrincipalArn" = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/helpdeskai-app-role"
+          }
+        }
+      },
+    ]
   })
 }
 
@@ -281,6 +296,12 @@ resource "aws_iam_role_policy" "app" {
           aws_s3_bucket.kb_docs.arn,
           aws_s3_bucket.attachments.arn,
         ]
+      },
+      {
+        # Lets the role mint tenant-scoped sessions of itself.
+        Effect   = "Allow"
+        Action   = ["sts:AssumeRole"]
+        Resource = [aws_iam_role.app.arn]
       },
       {
         # Query-only access keyed on tenant_id; no Scan.

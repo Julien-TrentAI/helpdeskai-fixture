@@ -11,6 +11,7 @@ The attachments bucket is the positive control (CTRL-CLOUD-001).
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any
@@ -24,13 +25,59 @@ _AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 _ATTACHMENTS_BUCKET = os.environ.get("ATTACHMENTS_BUCKET", "helpdeskAI-attachments")
 _KB_BUCKET = os.environ.get("KB_BUCKET", "helpdeskai-kb-docs")
 _PRESIGNED_URL_EXPIRY = 604800  # 7 days — VULN-DATA-004
+_TENANT_SESSION_SECONDS = 900  # 15 minutes
 
 
 class S3Client:
     """S3 client wrapper for KB documents and file attachments."""
 
     def __init__(self, region: str = _AWS_REGION) -> None:
+        self._region = region
         self._s3 = boto3.client("s3", region_name=region)
+
+    def _tenant_kb_client(self, tenant_id: str) -> Any:
+        """Build an S3 client whose credentials can only reach the tenant's KB prefix.
+
+        Assumes the application role with an inline session policy, so storage
+        refuses out-of-tenant keys even if a path traversal reaches it.
+        """
+        if not tenant_id or "/" in tenant_id or "*" in tenant_id or "?" in tenant_id:
+            raise PermissionError("Invalid tenant scope")
+        role_arn = os.environ.get("APP_ROLE_ARN")
+        if not role_arn:
+            raise RuntimeError("APP_ROLE_ARN is not configured")
+
+        bucket_arn = f"arn:aws:s3:::{_KB_BUCKET}"
+        session_policy = {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": ["s3:GetObject", "s3:PutObject"],
+                    "Resource": f"{bucket_arn}/{tenant_id}/*",
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": ["s3:ListBucket"],
+                    "Resource": bucket_arn,
+                    "Condition": {"StringLike": {"s3:prefix": f"{tenant_id}/*"}},
+                },
+            ],
+        }
+        sts = boto3.client("sts", region_name=self._region)
+        creds = sts.assume_role(
+            RoleArn=role_arn,
+            RoleSessionName=f"kb-{tenant_id}"[:64],
+            DurationSeconds=_TENANT_SESSION_SECONDS,
+            Policy=json.dumps(session_policy),
+        )["Credentials"]
+        return boto3.client(
+            "s3",
+            region_name=self._region,
+            aws_access_key_id=creds["AccessKeyId"],
+            aws_secret_access_key=creds["SecretAccessKey"],
+            aws_session_token=creds["SessionToken"],
+        )
 
     def search_kb(self, tenant_id: str, document_prefix: str) -> list[dict[str, Any]]:
         """List KB documents matching a prefix inside the caller's tenant folder.
@@ -54,7 +101,7 @@ class S3Client:
         tenant_prefix = f"{tenant_id}/"
         scoped_prefix = f"{tenant_prefix}{document_prefix}"
 
-        paginator = self._s3.get_paginator("list_objects_v2")
+        paginator = self._tenant_kb_client(tenant_id).get_paginator("list_objects_v2")
         results: list[dict[str, Any]] = []
 
         for page in paginator.paginate(Bucket=kb_bucket, Prefix=scoped_prefix):
@@ -84,7 +131,7 @@ class S3Client:
         """
         kb_bucket = _KB_BUCKET
         scoped_key = f"{tenant_id}/{document_key}"  # tenant-scoped prefix
-        self._s3.put_object(Bucket=kb_bucket, Key=scoped_key, Body=content)
+        self._tenant_kb_client(tenant_id).put_object(Bucket=kb_bucket, Key=scoped_key, Body=content)
         logger.info(
             "KB document uploaded",
             extra={"tenant_id": tenant_id, "key": scoped_key},
@@ -117,7 +164,7 @@ class S3Client:
         ):
             raise PermissionError("document_key is outside the authenticated tenant's scope")
 
-        url = self._s3.generate_presigned_url(
+        url = self._tenant_kb_client(tenant_id).generate_presigned_url(
             "get_object",
             Params={
                 "Bucket": _KB_BUCKET,  # shared bucket; tenant isolation via key prefix
