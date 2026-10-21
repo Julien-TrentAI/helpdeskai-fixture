@@ -27,7 +27,7 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
-from src.mcp_server.auth import require_auth
+from src.mcp_server.auth import BearerAuthMiddleware, require_auth
 
 # Every tool is wrapped with @require_auth: callers must present a bearer token
 # (see auth.py) and be authorized for the specific tool (VULN-APP-006 fixed).
@@ -171,5 +171,15 @@ def query_database(table: str, filter_column: str, filter_value: str) -> list[di
     return rows
 
 
+def build_sse_app():
+    """SSE ASGI app with the bearer check enforced in front of every request."""
+    return BearerAuthMiddleware(mcp.sse_app())
+
+
 if __name__ == "__main__":
-    mcp.run()
+    if os.environ.get("MCP_TRANSPORT") == "sse":
+        import uvicorn
+
+        uvicorn.run(build_sse_app(), host="127.0.0.1", port=int(os.environ.get("MCP_PORT", "8000")))
+    else:
+        mcp.run()

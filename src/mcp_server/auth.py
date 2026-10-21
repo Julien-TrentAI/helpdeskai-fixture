@@ -18,6 +18,8 @@ import os
 from functools import wraps
 from typing import Callable
 
+_DENIED = "Authentication failed."
+
 
 def _load_callers() -> dict[str, dict]:
     raw = os.environ.get("MCP_CALLERS", "")
@@ -48,12 +50,12 @@ def _request_token() -> str:
 def authenticate(token: str) -> dict:
     """Return the caller record for a valid token, else raise PermissionError."""
     if not token:
-        raise PermissionError("Missing bearer token for MCP tool call.")
+        raise PermissionError(_DENIED)
     digest = hashlib.sha256(token.encode()).hexdigest()
     for known_hash, caller in _load_callers().items():
         if hmac.compare_digest(digest, known_hash):
             return caller if isinstance(caller, dict) else {}
-    raise PermissionError("Invalid bearer token for MCP tool call.")
+    raise PermissionError(_DENIED)
 
 
 def authorize(token: str, tool_name: str) -> str:
@@ -61,7 +63,7 @@ def authorize(token: str, tool_name: str) -> str:
     caller = authenticate(token)
     allowed = caller.get("tools", [])
     if not isinstance(allowed, list) or tool_name not in allowed:
-        raise PermissionError(f"Caller is not authorized to use tool '{tool_name}'.")
+        raise PermissionError(_DENIED)
     return str(caller.get("caller", "unknown"))
 
 
@@ -74,3 +76,39 @@ def require_auth(tool_func: Callable) -> Callable:
         return tool_func(*args, **kwargs)
 
     return wrapper
+
+
+def is_valid_bearer(header: str) -> bool:
+    """True if an ``Authorization`` header carries a known bearer token."""
+    if not header.lower().startswith("bearer "):
+        return False
+    try:
+        authenticate(header[7:].strip())
+    except PermissionError:
+        return False
+    return True
+
+
+class BearerAuthMiddleware:
+    """ASGI middleware: reject HTTP/SSE requests without a valid bearer token."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers", []))
+            if not is_valid_bearer(headers.get(b"authorization", b"").decode("latin-1")):
+                body = b"Authentication failed."
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [
+                        (b"content-type", b"text/plain"),
+                        (b"content-length", str(len(body)).encode()),
+                        (b"www-authenticate", b"Bearer"),
+                    ],
+                })
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)

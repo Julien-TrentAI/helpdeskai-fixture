@@ -3,7 +3,9 @@
     "fixture-mcp": {
       "command": "python",
       "args": ["-m", "src.mcp_server.server"],
-      "env": {}
+      "env": {
+        "MCP_AUTH_TOKEN": "${MCP_AUTH_TOKEN}"
+      }
     },
 
     "trent": {
