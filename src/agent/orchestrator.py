@@ -16,7 +16,7 @@ from langgraph.graph.message import add_messages
 
 from .tools import ALL_TOOLS, SUB_AGENT_TOOLS
 from .sub_agent import create_sub_agent_node
-from .tool_validation import create_validated_tool_node
+from .tool_validation import create_result_validation_node, create_validated_tool_node
 
 
 class OrchestratorState(TypedDict):
@@ -136,11 +136,13 @@ def create_orchestrator(model_name: str = "claude-3-5-sonnet-20241022") -> "Orch
     graph = StateGraph(OrchestratorState)
     graph.add_node("agent", call_model)
     graph.add_node("tools", tool_node)
+    graph.add_node("validate_tools", create_result_validation_node())
     graph.add_node("sub_agent", create_sub_agent_node(SUB_AGENT_TOOLS))
 
     graph.add_edge(START, "agent")
     graph.add_conditional_edges("agent", should_continue, ["tools", "sub_agent", END])
-    graph.add_edge("tools", "agent")
+    graph.add_edge("tools", "validate_tools")
+    graph.add_edge("validate_tools", "agent")
     graph.add_edge("sub_agent", "agent")
 
     return Orchestrator(graph.compile())
