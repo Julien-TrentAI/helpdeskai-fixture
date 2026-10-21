@@ -1,3 +1,5 @@
+import ssl
+
 import pytest
 
 from src.agent import tools
@@ -35,3 +37,29 @@ def test_allows_public(monkeypatch):
 
 def test_redirect_cap():
     assert tools._ValidatingRedirectHandler.max_redirections == 2
+
+
+def test_connection_pins_validated_address(monkeypatch):
+    answers = iter([[(0, 0, 0, "", ("93.184.216.34", 443))]])
+    monkeypatch.setattr(tools.socket, "getaddrinfo", lambda *a, **k: next(answers))
+    seen = {}
+
+    class _Ctx(ssl.SSLContext):
+        def wrap_socket(self, sock, server_hostname=None, **kw):
+            seen["sni"] = server_hostname
+            return sock
+
+    monkeypatch.setattr(
+        tools.socket, "create_connection",
+        lambda addr, *a, **k: seen.setdefault("addr", addr) and object(),
+    )
+    conn = tools._PinnedHTTPSConnection("example.com", 443, context=_Ctx(ssl.PROTOCOL_TLS_CLIENT))
+    conn.connect()
+    assert seen["addr"] == ("93.184.216.34", 443)
+    assert seen["sni"] == "example.com"
+
+
+def test_connection_rejects_rebound_private_address(monkeypatch):
+    monkeypatch.setattr(tools.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", ("169.254.169.254", 443))])
+    with pytest.raises(ValueError):
+        tools._PinnedHTTPSConnection("example.com", 443).connect()
