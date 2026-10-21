@@ -118,7 +118,8 @@ READ_ALLOWED_ROOTS = tuple(
     os.path.realpath(os.path.join(_REPO_ROOT, d)) for d in ("prompts",)
 )
 
-ALLOWED_READ_DIRS = READ_ALLOWED_ROOTS
+APP_READ_ROOTS = READ_ALLOWED_ROOTS
+ALLOWED_READ_DIRS = APP_READ_ROOTS
 
 _READ_DENIED_NAME_RE = re.compile(
     r"^(\.env($|[.\-_])|.*\.env$|\.netrc$|credentials$|id_(rsa|ed25519|ecdsa|dsa)$|.*\.(pem|key)$)",
@@ -129,11 +130,13 @@ _READ_DENIED_NAME_RE = re.compile(
 def _validate_read_path(path: str) -> str:
     if not isinstance(path, str) or not path or "\x00" in path:
         raise ValueError("path is not allowed")
+    if ".." in re.split(r"[\\/]", path):
+        raise ValueError("path is not allowed")
     resolved = os.path.realpath(path)
     parts = resolved.split(os.sep)
     if (len(parts) > 1 and parts[1] in ("proc", "sys")) or any(_READ_DENIED_NAME_RE.match(p) for p in parts if p):
         raise ValueError("path is not allowed")
-    for root in ALLOWED_READ_DIRS:
+    for root in APP_READ_ROOTS:
         if resolved == root or resolved.startswith(root + os.sep):
             return resolved
     raise ValueError("path is outside the allowed directories")
