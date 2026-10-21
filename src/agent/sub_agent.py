@@ -15,7 +15,7 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-from src.agent.tool_validation import create_validated_tool_node
+from src.agent.tool_validation import create_validated_tool_node, validate_text_for_agent
 from src.agent.tools import _validate_task_no_injection
 
 
@@ -89,10 +89,22 @@ def create_sub_agent_node(tools: list[BaseTool]):
         task = _validate_task_no_injection(task)
         result = compiled.invoke({"messages": [HumanMessage(content=task)], "result": ""})
         result_text = result["messages"][-1].content
+        if not isinstance(result_text, str):
+            result_text = str(result_text)
+        flags = []
+        try:
+            result_text, flagged = validate_text_for_agent(result_text)
+            if flagged:
+                flags.append("delegate_to_sub_agent")
+        except ValueError:
+            result_text = "Sub-agent result was discarded: result too large."
 
         out: dict = {
             "context": {**state.get("context", {}), "sub_agent_result": result_text},
         }
+        if flags:
+            ctx = out["context"]
+            ctx["tool_output_flags"] = [*ctx.get("tool_output_flags", []), *flags]
         if tool_call_id is not None:
             out["messages"] = [
                 ToolMessage(content=str(result_text), tool_call_id=tool_call_id)
