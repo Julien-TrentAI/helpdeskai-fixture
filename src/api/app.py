@@ -12,11 +12,14 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import Depends, FastAPI, Request, Response
+from fastapi.dependencies.models import Dependant
+from fastapi.routing import APIRoute
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..auth.jwt_validator import get_current_tenant
 from ..logging_config import install_pii_redaction
 from .routers import admin, chat, kb
+from .routers.admin import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Future: initialise connection pools, load feature flags, warm caches
     yield
     logger.info("HelpDeskAI API shutting down")
+
+
+PUBLIC_PATHS = frozenset({"/healthz"})
+_AUTH_DEPENDENCIES = (get_current_tenant, require_admin)
+
+
+def _has_auth_dependency(dependant: Dependant) -> bool:
+    return any(
+        dep.call in _AUTH_DEPENDENCIES or _has_auth_dependency(dep)
+        for dep in dependant.dependencies
+    )
+
+
+def _assert_routes_authenticated(app: FastAPI) -> None:
+    """Fail at startup if any route other than /healthz lacks JWT authentication."""
+    unprotected = [
+        f"{route.path}"
+        for route in app.routes
+        if route.path not in PUBLIC_PATHS
+        and not (isinstance(route, APIRoute) and _has_auth_dependency(route.dependant))
+    ]
+    if unprotected:
+        raise RuntimeError(f"Routes missing authentication: {sorted(unprotected)}")
 
 
 def create_app() -> FastAPI:
@@ -44,6 +70,9 @@ def create_app() -> FastAPI:
             "Provides chat, knowledge base management, and support ticket operations."
         ),
         lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
     )
 
     # ── CORS middleware ───────────────────────────────────────────────────────
@@ -72,6 +101,8 @@ def create_app() -> FastAPI:
     @app.get("/healthz", tags=["ops"])
     async def health_check() -> dict:
         return {"status": "ok", "version": app.version}
+
+    _assert_routes_authenticated(app)
 
     return app
 
