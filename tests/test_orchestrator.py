@@ -90,3 +90,10 @@ def test_tool_node_overwrites_model_supplied_tenant_id():
     )
     node({"messages": [msg], "context": {"tenant_id": "mine"}})
     assert seen["tenant_id"] == "mine"
+
+
+def test_tenant_id_absent_from_model_facing_tool_schemas():
+    from src.agent.tools import ALL_TOOLS, SUB_AGENT_TOOLS
+
+    for t in {t.name: t for t in [*ALL_TOOLS, *SUB_AGENT_TOOLS]}.values():
+        assert "tenant_id" not in t.tool_call_schema.model_json_schema().get("properties", {}), t.name
