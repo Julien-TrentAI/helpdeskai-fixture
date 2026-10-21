@@ -21,7 +21,9 @@ import math
 import os
 import re
 import shlex
+import http.client
 import socket
+import ssl
 import subprocess
 import urllib.error
 import urllib.parse
@@ -218,6 +220,42 @@ def _allowed_fetch_hosts() -> frozenset:
     return frozenset(h.strip().lower().rstrip(".") for h in raw.split(",") if h.strip())
 
 
+def _resolve_public_addresses(host: str, port: int) -> list:
+    """Resolve host and return its addresses, rejecting any non-public one."""
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        raise ValueError("url host could not be resolved")
+    addrs = []
+    for info in infos:
+        addr = ipaddress.ip_address(info[4][0].split("%")[0])
+        if addr.version == 6 and addr.ipv4_mapped:
+            addr = addr.ipv4_mapped
+        if not addr.is_global or addr.is_multicast:
+            raise ValueError("url resolves to a blocked address range")
+        addrs.append(str(addr))
+    if not addrs:
+        raise ValueError("url host could not be resolved")
+    return addrs
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """Connects to the address that was just validated, not a second DNS answer.
+
+    TLS still verifies the certificate against the original hostname.
+    """
+
+    def connect(self):
+        addrs = _resolve_public_addresses(self.host, self.port)
+        sock = socket.create_connection((addrs[0], self.port), self.timeout, self.source_address)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_PinnedHTTPSConnection, req, context=ssl.create_default_context())
+
+
 def _validate_fetch_url(url: str) -> str:
     if not isinstance(url, str):
         raise ValueError("url must be a string")
@@ -229,16 +267,7 @@ def _validate_fetch_url(url: str) -> str:
     host = (parsed.hostname or "").lower().rstrip(".")
     if not host or host not in _allowed_fetch_hosts():
         raise ValueError("url host is not in the approved allowlist")
-    try:
-        infos = socket.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
-    except socket.gaierror:
-        raise ValueError("url host could not be resolved")
-    for info in infos:
-        addr = ipaddress.ip_address(info[4][0].split("%")[0])
-        if addr.version == 6 and addr.ipv4_mapped:
-            addr = addr.ipv4_mapped
-        if not addr.is_global or addr.is_multicast:
-            raise ValueError("url resolves to a blocked address range")
+    _resolve_public_addresses(host, parsed.port or 443)
     return url
 
 
@@ -261,7 +290,7 @@ def fetch_url(url: str) -> str:
         str, truncated to 50,000 characters.
     """
     _validate_fetch_url(url)
-    opener = urllib.request.build_opener(_ValidatingRedirectHandler)
+    opener = urllib.request.build_opener(_ValidatingRedirectHandler, _PinnedHTTPSHandler)
     with opener.open(url, timeout=10) as response:
         return _truncate_output(
             "fetch_url", response.read().decode("utf-8", errors="replace")
