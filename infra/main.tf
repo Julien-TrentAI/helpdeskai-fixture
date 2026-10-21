@@ -4,7 +4,7 @@
 # detect, alongside one positive control for contrast. Do NOT use as a template.
 #
 # PLANTED FINDINGS:
-#   VULN-DATA-003 (High):     KB bucket is public-read and has no server-side encryption
+#   VULN-DATA-003 (High):     (remediated) KB bucket is private with SSE-KMS
 #   VULN-CLOUD-001 (Critical): IAM policy grants s3:* and dynamodb:* on Resource "*"
 # POSITIVE CONTROLS:
 #   CTRL-CLOUD-001: attachments bucket enforces SSE-KMS + full public-access block
@@ -48,8 +48,24 @@ provider "aws" {
 # Knowledge-base bucket — private, SSE-KMS
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Single source of truth for the KB bucket name; the application reads the same value
+# from the KB_BUCKET environment variable (src/data/s3_client.py).
+variable "kb_bucket_name" {
+  description = "Name of the knowledge-base bucket (must match the application's KB_BUCKET setting)"
+  type        = string
+  default     = "helpdeskai-kb-docs"
+}
+
 resource "aws_s3_bucket" "kb_docs" {
-  bucket = "helpdeskai-kb-docs"
+  bucket = var.kb_bucket_name
+}
+
+# Disable ACLs entirely so no object ACL can grant public access.
+resource "aws_s3_bucket_ownership_controls" "kb_docs" {
+  bucket = aws_s3_bucket.kb_docs.id
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
 }
 
 resource "aws_kms_key" "kb_docs" {

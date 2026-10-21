@@ -4,7 +4,8 @@ Two logical buckets:
   helpdeskai-kb-docs         — shared KB documents under {tenant_id}/ (private, SSE-KMS)
   helpdeskAI-attachments     — shared attachments bucket (secure: SSE-KMS, no public access)
 
-The KB bucket is managed by Terraform (see infra/main.tf — VULN-DATA-003).
+The KB bucket is managed by Terraform (see infra/main.tf); its name comes from the
+KB_BUCKET setting, matching the Terraform `kb_bucket_name` variable.
 The attachments bucket is the positive control (CTRL-CLOUD-001).
 """
 
@@ -142,8 +143,7 @@ class S3Client:
         # fail if the bucket policy is ever relaxed. This is the correct pattern:
         # encrypt at rest with a customer-managed KMS key, store under a tenant-scoped
         # key prefix, and use the secure (non-public) attachments bucket.
-        # Contrast with the KB bucket (VULN-DATA-003) which has no encryption and
-        # a public-read ACL.
+        # The KB bucket is likewise private and SSE-KMS encrypted.
         """
         scoped_key = f"attachments/{tenant_id}/{filename}"
 
