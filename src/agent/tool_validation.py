@@ -298,15 +298,34 @@ def create_result_validation_node() -> Callable[[Any], dict]:
     return validate_results
 
 
+TENANT_BEARING_TOOLS = frozenset({"lookup_order", "search_kb", "issue_refund", "create_ticket"})
+
+
+def _declares_tenant_id(t) -> bool:
+    """True if the tool takes a tenant_id, however the schema exposes it.
+
+    ``tenant_id`` is declared as an ``InjectedToolArg``, which schema introspection
+    (``t.args``) may hide, so also check the underlying function signature and an
+    explicit set of tenant-bearing tool names.
+    """
+    if t.name in TENANT_BEARING_TOOLS:
+        return True
+    if "tenant_id" in (getattr(t, "args", None) or {}):
+        return True
+    for attr in ("func", "coroutine"):
+        fn = getattr(t, attr, None)
+        if fn is not None and "tenant_id" in getattr(fn, "__annotations__", {}):
+            return True
+    return False
+
+
 def with_context_tenant(inner, tools):
     """Wrap a tool node so tool-call tenant_id args come from the request context.
 
     The model never chooses the tenant: any ``tenant_id`` it emitted is replaced with
     ``state["context"]["tenant_id"]`` (taken from the verified JWT) before tools run.
     """
-    tenant_tools = {
-        t.name for t in tools if "tenant_id" in (getattr(t, "args", None) or {})
-    }
+    tenant_tools = {t.name for t in tools if _declares_tenant_id(t)}
 
     def tenant_scoped_tool_node(state):
         tenant_id = (state.get("context") or {}).get("tenant_id")
